@@ -28,36 +28,20 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.1.2';
+  const EXTENSION_VERSION = '1.2.0';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
   // inline it so the produced app is fully offline / self-contained.
-  // Forks can override these by setting the globals before the extension loads.
+  // Forks can override this by setting the global before the extension loads.
   const SCAFFOLDING_URL =
     (typeof window !== 'undefined' && window.MOBILE_SCAFFOLDING_URL) ||
     'https://packager.turbowarp.org/scaffolding/scaffolding-full.js';
 
-  // JSZip is used to assemble the downloadable Cordova/native project archive.
-  const JSZIP_URL =
-    (typeof window !== 'undefined' && window.MOBILE_JSZIP_URL) ||
-    'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
-
-  // Optional cloud build service endpoint. When set, the extension can POST the
-  // Cordova project zip and receive a compiled APK/IPA back — no local toolchain
-  // required. It must accept a multipart upload of the project zip and expose a
-  // simple job/status/download flow (Cordova-compatible, e.g. VoltBuilder-style).
-  // Left empty by default because no universal free public endpoint exists; set
-  //   window.MOBILE_BUILD_SERVICE_URL = 'https://your-build-endpoint/'
-  // before the extension loads, or use the "set cloud build service" block.
-  const DEFAULT_BUILD_SERVICE_URL =
-    (typeof window !== 'undefined' && window.MOBILE_BUILD_SERVICE_URL) || '';
-
-  // App Inventor WebViewer + Form component versions (from AppInventor sources).
-  const AI_WEBVIEWER_VERSION = 11;
-  const AI_FORM_VERSION = 32;
-  const AI_YOUNG_ANDROID_VERSION = 237;
-  const AI_YA_VERSION = '208';
+  // MIT App Inventor — opened so the user can embed the built HTML there.
+  const APP_INVENTOR_URL =
+    (typeof window !== 'undefined' && window.MOBILE_APP_INVENTOR_URL) ||
+    'https://ai2.appinventor.mit.edu';
 
   // Standard mobile viewport presets (portrait). Landscape swaps the axes.
   const VIEWPORT_PRESETS = {
@@ -143,7 +127,6 @@
       // exposes for a packaged project.
       this.appConfig = {
         name: 'My Mobile App',
-        packageId: 'world.cocrea.myapp',
         orientation: 'default', // default | portrait | landscape
         fullscreen: true,
         background: '#000000',
@@ -159,9 +142,6 @@
         resizeMode: 'preserve-ratio', // preserve-ratio | stretch | dynamic-resize
         username: 'player', // default username
       };
-
-      // Cloud build service endpoint (empty until configured).
-      this.buildServiceUrl = DEFAULT_BUILD_SERVICE_URL;
 
       // Cached fetch of the scaffolding runtime so repeated builds are fast.
       this._scaffoldingPromise = null;
@@ -603,45 +583,11 @@
           },
           {
             blockType: BlockType.BUTTON,
-            text: '🤖 Download Android project (Cordova)',
-            onClick: () => this.downloadCordovaProject(),
-            func: 'downloadCordovaProject',
-          },
-          {
-            blockType: BlockType.BUTTON,
-            text: '🧩 Download App Inventor project (.aia)',
-            onClick: () => this.downloadAppInventorProject(),
-            func: 'downloadAppInventorProject',
-          },
-          {
-            blockType: BlockType.BUTTON,
-            text: '☁️ Build APK in the cloud',
-            onClick: () => this.buildInCloud(),
-            func: 'buildInCloud',
+            text: '🧩 Open MIT App Inventor',
+            onClick: () => this.openAppInventor(),
+            func: 'openAppInventor',
           },
           '---App Info',
-          {
-            opcode: 'setAppName',
-            blockType: BlockType.COMMAND,
-            text: 'set app name to [NAME]',
-            arguments: {
-              NAME: {
-                type: ArgumentType.STRING,
-                defaultValue: 'My Mobile App',
-              },
-            },
-          },
-          {
-            opcode: 'setAppPackageId',
-            blockType: BlockType.COMMAND,
-            text: 'set app package id to [ID]',
-            arguments: {
-              ID: {
-                type: ArgumentType.STRING,
-                defaultValue: 'world.cocrea.myapp',
-              },
-            },
-          },
           {
             opcode: 'setAppOrientation',
             blockType: BlockType.COMMAND,
@@ -700,34 +646,6 @@
             text: '🔢 Set clone limit',
             onClick: () => this.promptMaxClones(),
             func: 'promptMaxClones',
-          },
-          {
-            blockType: BlockType.BUTTON,
-            text: '☁️ Set cloud build service URL',
-            onClick: () => this.promptCloudBuildService(),
-            func: 'promptCloudBuildService',
-          },
-          {
-            opcode: 'getBuildStatus',
-            blockType: BlockType.REPORTER,
-            text: 'build status',
-          },
-          {
-            opcode: 'getBuildSetting',
-            blockType: BlockType.REPORTER,
-            text: 'build setting [SETTING]',
-            arguments: {
-              SETTING: {
-                type: ArgumentType.STRING,
-                menu: 'BUILD_SETTING_MENU',
-                defaultValue: 'autoStart',
-              },
-            },
-          },
-          {
-            opcode: 'getExtensionVersion',
-            blockType: BlockType.REPORTER,
-            text: 'extension version',
           },
 
           // ─── Touch ───────────────────────────────────────────
@@ -916,19 +834,6 @@
           PREVIEW_ORIENTATION_MENU: [
             { text: 'portrait', value: 'portrait' },
             { text: 'landscape', value: 'landscape' },
-          ],
-          BUILD_SETTING_MENU: [
-            { text: 'start with green flag', value: 'autoStart' },
-            { text: 'turbo mode', value: 'turbo' },
-            { text: 'frame interpolation', value: 'interpolation' },
-            { text: 'high quality pen', value: 'highQualityPen' },
-            { text: 'keep sprites on stage (fencing)', value: 'fencing' },
-            { text: 'runtime limits', value: 'miscLimits' },
-            { text: 'fullscreen', value: 'fullscreen' },
-            { text: 'framerate', value: 'framerate' },
-            { text: 'resize mode', value: 'resizeMode' },
-            { text: 'clone limit', value: 'maxClones' },
-            { text: 'username', value: 'username' },
           ],
           SCROLL_DIR_MENU: [
             { text: 'any', value: 'any' },
@@ -1172,23 +1077,6 @@
     //  App build configuration
     // ----------------------------------------------------------------
 
-    setAppName(args) {
-      const name = Cast.toString(args.NAME).trim();
-      if (name) this.appConfig.name = name;
-    }
-
-    setAppPackageId(args) {
-      const id = Cast.toString(args.ID).trim();
-      // Basic reverse-domain sanitization; native tooling is strict about this.
-      if (id) {
-        this.appConfig.packageId = id
-          .toLowerCase()
-          .replace(/[^a-z0-9._]/g, '')
-          .replace(/\.{2,}/g, '.')
-          .replace(/^\.|\.$/g, '');
-      }
-    }
-
     setAppOrientation(args) {
       const mode = Cast.toString(args.MODE);
       if (['default', 'portrait', 'landscape'].includes(mode)) {
@@ -1284,36 +1172,6 @@
       if (!Number.isNaN(limit)) {
         this.appConfig.maxClones = limit > 0 ? Math.round(limit) : Infinity;
       }
-    }
-
-    promptCloudBuildService() {
-      if (typeof prompt !== 'function') return;
-      const answer = prompt(
-        'Cloud build service URL (leave blank to disable):',
-        this.buildServiceUrl || ''
-      );
-      if (answer == null) return;
-      this.buildServiceUrl = String(answer).trim();
-    }
-
-    getBuildStatus() {
-      return this._buildStatus;
-    }
-
-    /** Report a single build setting's current value (for scripts/UI feedback). */
-    getBuildSetting(args) {
-      const key = Cast.toString(args.SETTING);
-      if (key === 'maxClones') {
-        return this.appConfig.maxClones === Infinity ? 'unlimited' : this.appConfig.maxClones;
-      }
-      if (!Object.prototype.hasOwnProperty.call(this.appConfig, key)) return '';
-      const val = this.appConfig[key];
-      if (typeof val === 'boolean') return val ? 'on' : 'off';
-      return val;
-    }
-
-    getExtensionVersion() {
-      return EXTENSION_VERSION;
     }
 
     // ----------------------------------------------------------------
@@ -1545,181 +1403,22 @@
       }
     }
 
-    async downloadCordovaProject() {
-      try {
-        this._buildStatus = 'building';
-        const [html, JSZip] = await Promise.all([
-          this._generateHtmlApp(),
-          this._loadJSZip(),
-        ]);
-        const zip = new JSZip();
-        const cfg = this.appConfig;
-
-        // A minimal but complete Cordova project layout. After unzipping:
-        //   cordova platform add android
-        //   cordova build android      → produces an installable .apk
-        zip.file('www/index.html', html);
-        zip.file('config.xml', this._generateCordovaConfig());
-        zip.file('package.json', this._generateCordovaPackageJson());
-        zip.file('README.txt', this._generateCordovaReadme());
-
-        const blob = await zip.generateAsync({ type: 'blob' });
-        this._triggerDownload(
-          blob,
-          `${this._safeFileName(cfg.name)}-cordova.zip`
-        );
-        this._buildStatus = 'done';
-      } catch (e) {
-        this._buildStatus = 'error: ' + (e && e.message ? e.message : e);
-        this._reportBuildError(e);
-      }
-    }
-
     // ----------------------------------------------------------------
-    //  App Inventor (.aia) export
+    //  App Inventor — open the website so the user can embed the built HTML.
     //
-    //  App Inventor imports its own .aia format — it cannot read a Scratch
-    //  project directly. So we emit a valid single-screen .aia whose Screen1
-    //  hosts a full-screen WebViewer pointing at the bundled app, and we ship
-    //  the standalone HTML as an asset. The user opens it in App Inventor,
-    //  builds an APK, and (because WebViewer can't load a bundled asset via a
-    //  normal URL) hosts the HTML and sets the WebViewer HomeUrl. Instructions
-    //  are included in the archive.
+    //  MIT App Inventor can take the standalone HTML this extension produces
+    //  and embed it (e.g. via a WebViewer with HTML content), so there is no
+    //  need to generate an .aia here. We just open App Inventor in a new tab.
     // ----------------------------------------------------------------
 
-    async downloadAppInventorProject() {
+    openAppInventor() {
       try {
-        this._buildStatus = 'building';
-        const [html, JSZip] = await Promise.all([
-          this._generateHtmlApp(),
-          this._loadJSZip(),
-        ]);
-        const zip = new JSZip();
-        const cfg = this.appConfig;
-        const projectName = this._aiProjectName(cfg.name);
-        const user = 'ai_cocrea';
-        const base = `src/appinventor/${user}/${projectName}`;
-
-        zip.file('youngandroidproject/project.properties', this._generateAiProjectProperties(projectName, user));
-        zip.file(`${base}/Screen1.scm`, this._generateAiScm(projectName));
-        zip.file(`${base}/Screen1.bky`, this._generateAiBky());
-        zip.file(`${base}/Screen1.yail`, this._generateAiYail(projectName, user));
-        // Ship the runnable app as an asset the user can host.
-        zip.file('assets/app.html', html);
-        zip.file('README.txt', this._generateAiReadme(cfg));
-
-        const blob = await zip.generateAsync({ type: 'blob' });
-        this._triggerDownload(blob, `${this._safeFileName(cfg.name)}.aia`);
-        this._buildStatus = 'done';
+        if (typeof window !== 'undefined' && typeof window.open === 'function') {
+          window.open(APP_INVENTOR_URL, '_blank', 'noopener');
+        }
       } catch (e) {
-        this._buildStatus = 'error: ' + (e && e.message ? e.message : e);
         this._reportBuildError(e);
       }
-    }
-
-    // ----------------------------------------------------------------
-    //  Cloud build — POST the Cordova zip to a build service and get an APK.
-    //
-    //  Requires a configured, Cordova-compatible build endpoint (set via the
-    //  "set cloud build service" block or window.MOBILE_BUILD_SERVICE_URL).
-    //  The endpoint contract this expects:
-    //    POST  <url>            multipart form field "project" = zip
-    //          → 200 JSON { id }  OR  200 with the binary APK directly
-    //    GET   <url>status/<id> → JSON { status: 'pending'|'done'|'error',
-    //                                    downloadUrl?, message? }
-    // ----------------------------------------------------------------
-
-    async buildInCloud() {
-      if (!this.buildServiceUrl) {
-        this._buildStatus = 'error: no cloud build service configured';
-        this._reportBuildError(
-          new Error(
-            'No cloud build service is configured. Use the "set cloud build service" ' +
-              'block (or window.MOBILE_BUILD_SERVICE_URL) to point at a Cordova-compatible ' +
-              'build endpoint, then try again. You can also use the Cordova or App Inventor ' +
-              'download and build locally.'
-          )
-        );
-        return;
-      }
-      try {
-        this._buildStatus = 'building';
-        const [html, JSZip] = await Promise.all([
-          this._generateHtmlApp(),
-          this._loadJSZip(),
-        ]);
-        const zip = new JSZip();
-        zip.file('www/index.html', html);
-        zip.file('config.xml', this._generateCordovaConfig());
-        zip.file('package.json', this._generateCordovaPackageJson());
-        const projectZip = await zip.generateAsync({ type: 'blob' });
-
-        const form = new FormData();
-        form.append('project', projectZip, `${this._safeFileName(this.appConfig.name)}.zip`);
-        form.append('platform', 'android');
-        form.append('appName', this.appConfig.name);
-        form.append('packageId', this.appConfig.packageId);
-
-        this._buildStatus = 'uploading';
-        const res = await fetch(this.buildServiceUrl, { method: 'POST', body: form });
-        if (!res.ok) {
-          throw new Error(`Build service responded ${res.status}`);
-        }
-
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.indexOf('application/json') === -1) {
-          // Endpoint returned the APK binary directly.
-          const apk = await res.blob();
-          this._triggerDownload(apk, `${this._safeFileName(this.appConfig.name)}.apk`);
-          this._buildStatus = 'done';
-          return;
-        }
-
-        const job = await res.json();
-        if (job && job.downloadUrl) {
-          await this._downloadRemoteApk(job.downloadUrl);
-          this._buildStatus = 'done';
-          return;
-        }
-        if (job && job.id) {
-          const downloadUrl = await this._pollCloudBuild(job.id);
-          await this._downloadRemoteApk(downloadUrl);
-          this._buildStatus = 'done';
-          return;
-        }
-        throw new Error('Build service returned an unexpected response.');
-      } catch (e) {
-        this._buildStatus = 'error: ' + (e && e.message ? e.message : e);
-        this._reportBuildError(e);
-      }
-    }
-
-    async _pollCloudBuild(id) {
-      const statusBase = this.buildServiceUrl.replace(/\/?$/, '/') + 'status/';
-      const maxAttempts = 120; // ~10 minutes at 5s
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        this._buildStatus = `building (checking ${attempt + 1})`;
-        // eslint-disable-next-line no-await-in-loop
-        const res = await fetch(statusBase + encodeURIComponent(id));
-        if (res.ok) {
-          // eslint-disable-next-line no-await-in-loop
-          const data = await res.json();
-          if (data.status === 'done' && data.downloadUrl) return data.downloadUrl;
-          if (data.status === 'error') {
-            throw new Error(data.message || 'Cloud build failed.');
-          }
-        }
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-      throw new Error('Cloud build timed out.');
-    }
-
-    async _downloadRemoteApk(url) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Could not download APK (${res.status})`);
-      const blob = await res.blob();
-      this._triggerDownload(blob, `${this._safeFileName(this.appConfig.name)}.apk`);
     }
 
     _reportBuildError(e) {
@@ -1734,253 +1433,8 @@
     }
 
     // ----------------------------------------------------------------
-    //  Cordova project file generators
+    //  Utility: downloads, encoding, escaping
     // ----------------------------------------------------------------
-
-    _generateCordovaConfig() {
-      const cfg = this.appConfig;
-      const orientation =
-        cfg.orientation === 'default' ? 'default' : cfg.orientation;
-      return `<?xml version='1.0' encoding='utf-8'?>
-<widget id="${this._escapeXml(cfg.packageId)}" version="1.0.0"
-        xmlns="http://www.w3.org/ns/widgets"
-        xmlns:cdv="http://cordova.apache.org/ns/1.0">
-  <name>${this._escapeXml(cfg.name)}</name>
-  <description>Mobile app built with the Cocrea Mobile Events extension.</description>
-  <content src="index.html" />
-  <access origin="*" />
-  <allow-intent href="http://*/*" />
-  <allow-intent href="https://*/*" />
-  <preference name="Orientation" value="${orientation}" />
-  <preference name="Fullscreen" value="${cfg.fullscreen ? 'true' : 'false'}" />
-  <preference name="BackgroundColor" value="0xff000000" />
-  <preference name="DisallowOverscroll" value="true" />
-  <preference name="SplashMaintainAspectRatio" value="true" />
-  <platform name="android">
-    <preference name="android-minSdkVersion" value="24" />
-  </platform>
-  <platform name="ios">
-    <preference name="deployment-target" value="13.0" />
-  </platform>
-</widget>`;
-    }
-
-    _generateCordovaPackageJson() {
-      const cfg = this.appConfig;
-      return JSON.stringify(
-        {
-          name: this._safeFileName(cfg.name).replace(/-/g, '') || 'mobileapp',
-          displayName: cfg.name,
-          version: '1.0.0',
-          description: 'Built with the Cocrea Mobile Events extension.',
-          main: 'index.js',
-          devDependencies: {
-            cordova: '^12.0.0',
-            'cordova-android': '^13.0.0',
-            'cordova-ios': '^7.1.0',
-          },
-          cordova: {
-            platforms: ['android'],
-          },
-        },
-        null,
-        2
-      );
-    }
-
-    _generateCordovaReadme() {
-      const cfg = this.appConfig;
-      return [
-        `${cfg.name} — Cordova mobile project`,
-        '',
-        'This project was generated by the Cocrea Mobile Events extension.',
-        'It wraps your Scratch project (already bundled offline in www/index.html)',
-        'into a native mobile app.',
-        '',
-        'Prerequisites:',
-        '  - Node.js and npm',
-        '  - Apache Cordova:  npm install -g cordova',
-        '  - Android: Android Studio + JDK 17 (for building an APK)',
-        '  - iOS: Xcode (macOS only, for building an IPA)',
-        '',
-        'Build an Android APK:',
-        '  1. Unzip this folder and open a terminal in it.',
-        '  2. cordova platform add android',
-        '  3. cordova build android',
-        '     → APK appears under platforms/android/app/build/outputs/apk/',
-        '',
-        'Build for iOS (macOS only):',
-        '  1. cordova platform add ios',
-        '  2. cordova build ios',
-        '  3. Open the generated Xcode project to sign and archive.',
-        '',
-        `App id: ${cfg.packageId}`,
-        `Orientation: ${cfg.orientation}`,
-      ].join('\n');
-    }
-
-    // ----------------------------------------------------------------
-    //  App Inventor (.aia) file generators
-    // ----------------------------------------------------------------
-
-    _aiProjectName(name) {
-      // App Inventor project names must be valid identifiers.
-      let n = Cast.toString(name).replace(/[^A-Za-z0-9_]/g, '');
-      if (!n || !/^[A-Za-z]/.test(n)) n = 'App' + n;
-      return n;
-    }
-
-    _generateAiProjectProperties(projectName, user) {
-      const cfg = this.appConfig;
-      const sizing = cfg.resizeMode === 'stretch' ? 'Responsive' : 'Fixed';
-      return [
-        `main=appinventor.${user}.${projectName}.Screen1`,
-        `name=${projectName}`,
-        'assets=../assets',
-        'source=../src',
-        'build=../build',
-        'versioncode=1',
-        'versionname=1.0',
-        'useslocation=False',
-        `aname=${cfg.name}`,
-        `sizing=${sizing}`,
-        'showlistsasjson=True',
-        'actionbar=False',
-        'theme=Classic',
-        'color.primary=&HFF3F51B5',
-        'color.primary.dark=&HFF303F9F',
-        'color.accent=&HFFFF4081',
-      ].join('\n');
-    }
-
-    _aiScreenOrientation() {
-      switch (this.appConfig.orientation) {
-        case 'portrait':
-          return 'portrait';
-        case 'landscape':
-          return 'landscape';
-        default:
-          return 'unspecified';
-      }
-    }
-
-    _generateAiScm(projectName) {
-      const cfg = this.appConfig;
-      // A Form containing a single full-screen WebViewer.
-      const scmObject = {
-        authURL: ['*UNKNOWN*', 'localhost'],
-        YaVersion: AI_YA_VERSION,
-        Source: 'Form',
-        Properties: {
-          $Name: 'Screen1',
-          $Type: 'Form',
-          $Version: String(AI_FORM_VERSION),
-          AppName: cfg.name,
-          ScreenOrientation: this._aiScreenOrientation(),
-          Scrollable: 'False',
-          Sizing: cfg.resizeMode === 'stretch' ? 'Responsive' : 'Fixed',
-          Title: cfg.name,
-          Uuid: '0',
-          $Components: [
-            {
-              $Name: 'AppWebViewer',
-              $Type: 'WebViewer',
-              $Version: String(AI_WEBVIEWER_VERSION),
-              Height: '-2', // -2 = Fill Parent
-              Width: '-2',
-              // HomeUrl is left for the user to set to their hosted app URL.
-              // See README.txt in the .aia — WebViewer cannot load a bundled
-              // asset directly on all Android versions.
-              HomeUrl: '',
-              Uuid: '1000000001',
-            },
-          ],
-        },
-      };
-      return `#|\n$JSON\n${JSON.stringify(scmObject)}\n|#`;
-    }
-
-    _generateAiBky() {
-      // No blocks are required; an empty blocks canvas is valid.
-      return (
-        '<xml xmlns="http://www.w3.org/1999/xhtml">\n' +
-        `  <yacodeblocks ya-version="${AI_YA_VERSION}" language-version="33"></yacodeblocks>\n` +
-        '</xml>'
-      );
-    }
-
-    _generateAiYail(projectName, user) {
-      const cfg = this.appConfig;
-      const form = `appinventor.${user}.${projectName}.Screen1`;
-      return [
-        '#|',
-        '$Source $Yail',
-        '|#',
-        `(define-form ${form} Screen1 #t)`,
-        '(require <com.google.youngandroid.runtime>)',
-        ';;; Screen1',
-        `(do-after-form-creation (set-and-coerce-property! 'Screen1 'AppName ${JSON.stringify(cfg.name)} 'text)`,
-        ` (set-and-coerce-property! 'Screen1 'Title ${JSON.stringify(cfg.name)} 'text)`,
-        ')',
-        ';;; AppWebViewer',
-        '(add-component Screen1 com.google.appinventor.components.runtime.WebViewer AppWebViewer)',
-      ].join('\n');
-    }
-
-    _generateAiReadme(cfg) {
-      return [
-        `${cfg.name} — App Inventor project (.aia)`,
-        '',
-        'App Inventor cannot run a Scratch project directly, so this .aia gives',
-        'you an App Inventor app whose screen is a full-screen WebViewer that',
-        'displays your packaged app (included here as assets/app.html).',
-        '',
-        'How to use:',
-        '  1. Go to https://ai2.appinventor.mit.edu and sign in.',
-        '  2. Projects → Import project (.aia) from my computer → choose this file.',
-        '  3. Host the included assets/app.html somewhere reachable by the phone',
-        '     (any static host, e.g. GitHub Pages, Netlify, your own server).',
-        '  4. In the Designer, select AppWebViewer and set its HomeUrl to that',
-        '     hosted URL (https://.../app.html).',
-        '  5. Build → App (.apk / .aab) to get an installable app.',
-        '',
-        'Why host the HTML? Android WebViewer needs a real URL; loading a bundled',
-        'asset file is unreliable across Android versions. Hosting the one HTML',
-        'file is the simplest reliable approach.',
-        '',
-        `App name: ${cfg.name}`,
-        `Orientation: ${cfg.orientation}`,
-      ].join('\n');
-    }
-
-    // ----------------------------------------------------------------
-    //  Utility: JSZip loader, downloads, encoding, escaping
-    // ----------------------------------------------------------------
-
-    _loadJSZip() {
-      if (typeof window !== 'undefined' && window.JSZip) {
-        return Promise.resolve(window.JSZip);
-      }
-      // Reuse the VM's bundled JSZip if the host exposes it.
-      if (
-        typeof Scratch !== 'undefined' &&
-        Scratch.vm &&
-        Scratch.vm.exports &&
-        Scratch.vm.exports.JSZip
-      ) {
-        return Promise.resolve(Scratch.vm.exports.JSZip);
-      }
-      return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = JSZIP_URL;
-        script.onload = () => {
-          if (window.JSZip) resolve(window.JSZip);
-          else reject(new Error('JSZip failed to load'));
-        };
-        script.onerror = () => reject(new Error('Could not load JSZip from ' + JSZIP_URL));
-        document.head.appendChild(script);
-      });
-    }
 
     _triggerDownload(blob, filename) {
       const url = URL.createObjectURL(blob);
@@ -2021,15 +1475,6 @@
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-    }
-
-    _escapeXml(str) {
-      return Cast.toString(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
     }
   }
 

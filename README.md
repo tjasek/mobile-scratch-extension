@@ -1,9 +1,9 @@
 # Mobile Events Extension
 
 A JavaScript extension for **Cocrea / Gandi IDE / TurboWarp** that brings
-AppInventor-style mobile capabilities to Scratch projects and **builds a mobile
-app directly from the extension** — standalone HTML, a Cordova project, an App
-Inventor `.aia`, or a cloud-built APK.
+AppInventor-style mobile capabilities to Scratch projects and **builds a
+standalone HTML app directly from the extension**. To turn that into an
+installable APK, open MIT App Inventor and embed the HTML there.
 
 The extension is compatible with both the Gandi/Cocrea extension runtime and
 vanilla TurboWarp.
@@ -20,7 +20,7 @@ one of these URLs. The **Mobile Events** category then appears in the palette.
 **Pinned release (stable, recommended for sharing):**
 
 ```
-https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.1.2/mobile-extension.js
+https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.0/mobile-extension.js
 ```
 
 **Latest on main (may be cached by jsDelivr for a few hours):**
@@ -40,10 +40,9 @@ For local development, the VSCode *Live Server* extension serves the file at a
 
 ## Versioning
 
-The current version is exposed both in code (`EXTENSION_VERSION`) and via the
-**extension version** reporter block. Releases are git tags (`vMAJOR.MINOR.PATCH`)
-that map to a stable, cache-friendly `@vX.Y.Z` jsDelivr URL. To use a specific
-version, swap the tag in the pinned URL above.
+The current version is recorded in code as `EXTENSION_VERSION`. Releases are git
+tags (`vMAJOR.MINOR.PATCH`) that map to a stable, cache-friendly `@vX.Y.Z`
+jsDelivr URL. To use a specific version, swap the tag in the pinned URL above.
 
 ## Blocks
 
@@ -53,23 +52,20 @@ These blocks build the app **directly from the extension**. See
 
 **Outputs**
 
+| Button | Description |
+| --- | --- |
+| 📱 Download standalone app (HTML) | Builds a single self-contained `.html` that runs your project offline (also works inside a mobile WebView). |
+| � Open MIT App Inventor | Opens [App Inventor](https://ai2.appinventor.mit.edu) in a new tab so you can embed the HTML and build an APK there. |
+
 | Block | Type | Description |
 | --- | --- | --- |
-| 📱 Download standalone app (HTML) | button | A single self-contained `.html` that runs your project offline (also works inside a mobile WebView). |
-| 🤖 Download Android project (Cordova) | button | A ready-to-compile Cordova project (`.zip`) → installable APK/IPA with one CLI command. |
-| 🧩 Download App Inventor project (.aia) | button | An App Inventor project that shows your app in a full-screen WebViewer; import it into MIT App Inventor and build an APK there. |
-| ☁️ Build APK in the cloud | button | Uploads the Cordova project to a configured cloud build service and downloads the finished APK — no local tooling. |
-| build standalone app (HTML) | command | Script version of the HTML button. |
-| build Android project (Cordova) | command | Script version of the Cordova button. |
-| build status | reporter | `idle` / `building` / `uploading` / `done` / `error: …`. |
+| build standalone app (HTML) | command | Script version of the HTML download button. |
 
 **App info**
 
 | Block | Type | Description |
 | --- | --- | --- |
-| set app name to [NAME] | command | The app's display name. |
-| set app package id to [ID] | command | Reverse-domain id, e.g. `world.cocrea.myapp`. |
-| lock app orientation to [any/portrait/landscape] | command | Locks the native app orientation. |
+| lock app orientation to [any/portrait/landscape] | command | Locks the app orientation baked into the build. |
 | preview app as [portrait/landscape] in editor | command | Resizes the editor stage to a phone viewport to preview proportions. |
 
 **Build settings** (mirror the TurboWarp packager)
@@ -85,11 +81,6 @@ the extension and applied to every build.
 | 🖼 Set resize mode | `preserve-ratio`, `stretch`, or `dynamic-resize`. |
 | 👤 Set username | Value returned by the app's `username` block. |
 | 🔢 Set clone limit | Max clones (0 or less = unlimited). |
-| ☁️ Set cloud build service URL | Endpoint used by *Build APK in the cloud*. |
-
-| Block | Type | Description |
-| --- | --- | --- |
-| build setting [setting] | reporter | Current value of a chosen build setting (for feedback in scripts). |
 
 ### Touch
 | Block | Type | Description |
@@ -157,80 +148,31 @@ app** — the same core artifact the TurboWarp packager makes. At build time it:
 
 All build settings above (green-flag autostart, framerate, turbo, interpolation,
 high quality pen, fencing, runtime limits, resize mode, clone limit, username)
-are baked into the generated app, matching the TurboWarp packager's options.
+are baked into the generated HTML, matching the TurboWarp packager's options.
 
-> A browser sandbox can't invoke the Android SDK or Xcode, so the extension
-> can't compile a native `.apk`/`.ipa` locally. It gets you there via a Cordova
-> project, an App Inventor project, or a cloud build service.
-
-### Option 1 — Standalone HTML app
+### Step 1 — Build the standalone HTML app
 
 Click **📱 Download standalone app (HTML)**. You get one `.html` file that runs
-offline on any device or inside any WebView. Quickest way to test on a phone.
+offline on any device or inside a WebView. This is the whole app in a single
+file. You can test it right away by opening it on a phone.
 
-### Option 2 — Native Android/iOS app (Cordova)
+### Step 2 — Turn it into an APK with MIT App Inventor
 
-Click **🤖 Download Android project (Cordova)**. You get a `.zip` containing:
+Click **🧩 Open MIT App Inventor** to open
+[App Inventor](https://ai2.appinventor.mit.edu). App Inventor can take the HTML
+file and embed it (via its WebViewer's HTML content), then build a real APK/AAB
+you can install. Follow App Inventor's build flow once your project is set up.
 
-```
-www/index.html   ← your app, bundled offline
-config.xml       ← app name, id, orientation
-package.json
-README.txt       ← build steps
-```
-
-Then, with [Cordova](https://cordova.apache.org/) installed:
-
-```bash
-unzip my-mobile-app-cordova.zip -d my-app && cd my-app
-cordova platform add android
-cordova build android          # → installable APK
-```
-
-For iOS (macOS + Xcode): `cordova platform add ios && cordova build ios`.
-
-### Option 3 — MIT App Inventor (.aia)
-
-Click **🧩 Download App Inventor project (.aia)**. App Inventor can't import a
-Scratch project, so the `.aia` gives you an App Inventor app whose `Screen1` is
-a full-screen **WebViewer** that displays your packaged app (included in the
-archive as `assets/app.html`). Steps (also in the archive's `README.txt`):
-
-1. At [ai2.appinventor.mit.edu](https://ai2.appinventor.mit.edu): **Projects →
-   Import project (.aia)**.
-2. Host `assets/app.html` somewhere reachable by the phone (any static host).
-3. Select **AppWebViewer** in the Designer and set its **HomeUrl** to that URL.
-4. **Build → App (.apk / .aab)**.
-
-Android's WebViewer needs a real URL, so hosting the one HTML file is the
-reliable approach.
-
-### Option 4 — Cloud APK (no local tooling)
-
-Click **☁️ Build APK in the cloud**. This uploads the Cordova project to a build
-service and downloads the finished APK. You must first point it at a
-Cordova-compatible endpoint:
-
-- Block: **set cloud build service to [URL]**, or
-- Global: `window.MOBILE_BUILD_SERVICE_URL = 'https://your-endpoint/'`.
-
-Expected endpoint contract:
-
-- `POST <url>` with multipart field `project` = the project zip. Returns either
-  the APK binary directly, or JSON `{ id }` (async) / `{ downloadUrl }`.
-- `GET <url>status/<id>` → JSON `{ status: 'pending'|'done'|'error', downloadUrl?, message? }`.
-
-There is no universal free public build endpoint, so this is left unconfigured
-by default. Any Cordova/PhoneGap-Build/VoltBuilder-style service that follows the
-contract above works; a small self-hosted wrapper around the Cordova CLI works too.
+> A browser sandbox can't invoke the Android SDK or Xcode, so the extension
+> can't compile a native `.apk` itself. App Inventor handles that final step.
 
 ### Configuring the build
 
 Set these before building (in a script, or drag onto the stage and click):
 
-- **set app name**, **set app package id**, **lock app orientation**.
-- Build-setting toggles + **set app framerate / resize mode / clone limit /
-  username** (see the block tables above).
+- **lock app orientation** (portrait / landscape / any).
+- Build-setting buttons: **Configure build settings**, **Set framerate**,
+  **Set resize mode**, **Set username**, **Set clone limit**.
 
 ### Orientation preview
 
@@ -244,8 +186,7 @@ editor**, and it also sets the app's locked orientation.
 Set these globals before the extension loads:
 
 - `window.MOBILE_SCAFFOLDING_URL` — alternate scaffolding runtime URL.
-- `window.MOBILE_JSZIP_URL` — alternate JSZip URL.
-- `window.MOBILE_BUILD_SERVICE_URL` — default cloud build endpoint.
+- `window.MOBILE_APP_INVENTOR_URL` — alternate App Inventor URL.
 
 ## License
 

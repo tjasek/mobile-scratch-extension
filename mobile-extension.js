@@ -28,7 +28,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.1.0';
+  const EXTENSION_VERSION = '1.1.1';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -504,6 +504,10 @@
      * is hit.
      */
     _pickDrawable(clientX, clientY) {
+      // Resolve the sprite under a client point to a *target id* (not a raw
+      // drawable id). Mirrors TurboWarp scaffolding: pick() takes canvas-space
+      // coordinates (CSS pixels relative to the canvas, no DPR scaling) and
+      // returns -1 or false when nothing/only the backdrop is hit.
       try {
         const renderer = this.runtime && this.runtime.renderer;
         if (!renderer || typeof renderer.pick !== 'function') return null;
@@ -515,19 +519,36 @@
           x = clientX - rect.left;
           y = clientY - rect.top;
         }
-        const picked = renderer.pick(x, y);
-        return picked === false || picked == null ? null : picked;
+        const drawableId = renderer.pick(x, y);
+        // No sprite under the point (empty stage / backdrop) → not a sprite hit.
+        if (drawableId === -1 || drawableId === false || drawableId == null) {
+          return null;
+        }
+        // Map the drawable to its owning target id when the VM supports it.
+        const vm = this.runtime && this.runtime.vm;
+        if (vm && typeof vm.getTargetIdForDrawableId === 'function') {
+          const targetId = vm.getTargetIdForDrawableId(drawableId);
+          return targetId == null ? null : targetId;
+        }
+        // Fallback: return the drawable id itself (older/mocked runtimes).
+        return drawableId;
       } catch (e) {
         return null;
       }
     }
 
-    /** Does the given util's target own the currently touched/dragged drawable? */
-    _isTargetTouched(util, drawableID) {
-      if (drawableID == null) return false;
+    /**
+     * Does the given util's target correspond to the touched/dragged sprite?
+     * `pickedId` is a target id (preferred) or drawable id (fallback).
+     */
+    _isTargetTouched(util, pickedId) {
+      if (pickedId == null) return false;
       const target = util && util.target;
       if (!target || target.isStage) return false;
-      return target.drawableID === drawableID;
+      // Prefer matching by target id (handles clones/layers correctly).
+      if (target.id != null && target.id === pickedId) return true;
+      // Fallback for runtimes without getTargetIdForDrawableId.
+      return target.drawableID != null && target.drawableID === pickedId;
     }
 
     _countTouches(event, fallback) {

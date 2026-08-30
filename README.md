@@ -14,11 +14,36 @@ phone-shaped viewport so you can preview the app's proportions while you build.
 
 ## Loading the extension
 
-1. Serve `mobile-extension.js` at a URL (for local dev, the VSCode *Live Server*
-   extension works well).
-2. In the Cocrea/Gandi editor, open the **Extensions** tab → **Custom** and load
-   the extension by its URL.
-3. The **Mobile Events** category appears in the block palette.
+In the Cocrea/Gandi editor, open the **Extensions** tab → **Custom** and paste
+one of these URLs. The **Mobile Events** category then appears in the palette.
+
+**Pinned release (stable, recommended for sharing):**
+
+```
+https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.0.0/mobile-extension.js
+```
+
+**Latest on main (may be cached by jsDelivr for a few hours):**
+
+```
+https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@main/mobile-extension.js
+```
+
+**Newest immediately (no CDN cache, good while developing):**
+
+```
+https://raw.githubusercontent.com/tjasek/mobile-scratch-extension/main/mobile-extension.js
+```
+
+For local development, the VSCode *Live Server* extension serves the file at a
+`http://127.0.0.1:5500/...` URL you can load the same way.
+
+## Versioning
+
+The current version is exposed both in code (`EXTENSION_VERSION`) and via the
+**extension version** reporter block. Releases are git tags (`vMAJOR.MINOR.PATCH`)
+that map to a stable, cache-friendly `@vX.Y.Z` jsDelivr URL. To use a specific
+version, swap the tag in the pinned URL above.
 
 ## Blocks
 

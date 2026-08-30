@@ -27,6 +27,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
+  const EXTENSION_VERSION = '1.0.0';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -613,6 +614,11 @@
             blockType: BlockType.REPORTER,
             text: 'build status',
           },
+          {
+            opcode: 'getExtensionVersion',
+            blockType: BlockType.REPORTER,
+            text: 'extension version',
+          },
 
           // ─── Touch ───────────────────────────────────────────
           '---Touch',
@@ -1066,6 +1072,10 @@
 
     getBuildStatus() {
       return this._buildStatus;
+    }
+
+    getExtensionVersion() {
+      return EXTENSION_VERSION;
     }
 
     // ----------------------------------------------------------------

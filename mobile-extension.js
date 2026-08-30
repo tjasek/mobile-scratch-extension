@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.6/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.7/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -64,7 +64,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.6';
+  const EXTENSION_VERSION = '1.2.7';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -616,11 +616,22 @@
         if (drawableId === -1 || drawableId === false || drawableId == null) {
           return null;
         }
-        // Map the drawable to its owning target id when the VM supports it.
-        const vm = this.runtime && this.runtime.vm;
-        if (vm && typeof vm.getTargetIdForDrawableId === 'function') {
-          const targetId = vm.getTargetIdForDrawableId(drawableId);
-          return targetId == null ? null : targetId;
+        // Map the drawable to its owning target id. In scratch-vm this lives on
+        // the RUNTIME (this.runtime.getTargetIdForDrawableId). In the packaged
+        // app `this.runtime` IS the vm.runtime, so `this.runtime.vm` is usually
+        // undefined — relying on it (the old code) meant this mapping never ran
+        // and per-sprite touch/drag never matched. Try every location.
+        const candidates = [
+          this.runtime,
+          this.runtime && this.runtime.vm,
+          typeof Scratch !== 'undefined' && Scratch.vm,
+          typeof window !== 'undefined' && window.vm,
+        ];
+        for (const obj of candidates) {
+          if (obj && typeof obj.getTargetIdForDrawableId === 'function') {
+            const targetId = obj.getTargetIdForDrawableId(drawableId);
+            if (targetId != null) return targetId;
+          }
         }
         // Fallback: return the drawable id itself (older/mocked runtimes).
         return drawableId;
@@ -638,15 +649,20 @@
     _pickTarget(clientX, clientY) {
       const pickedId = this._pickDrawable(clientX, clientY);
       if (pickedId == null) return null;
-      const vm = this.runtime && this.runtime.vm;
+      // getTargetById lives on the runtime in scratch-vm. Check the runtime
+      // first (that's where it is in the packaged app), then vm fallbacks.
+      const runtimes = [
+        this.runtime,
+        this.runtime && this.runtime.vm && this.runtime.vm.runtime,
+        typeof Scratch !== 'undefined' && Scratch.vm && Scratch.vm.runtime,
+        typeof window !== 'undefined' && window.vm && window.vm.runtime,
+      ];
       try {
-        if (vm && typeof vm.runtime === 'object' && typeof vm.runtime.getTargetById === 'function') {
-          const t = vm.runtime.getTargetById(pickedId);
-          if (t && !t.isStage) return t;
-        }
-        if (this.runtime && typeof this.runtime.getTargetById === 'function') {
-          const t = this.runtime.getTargetById(pickedId);
-          if (t && !t.isStage) return t;
+        for (const rt of runtimes) {
+          if (rt && typeof rt.getTargetById === 'function') {
+            const t = rt.getTargetById(pickedId);
+            if (t && !t.isStage) return t;
+          }
         }
       } catch (e) {
         /* fall through */
@@ -1779,13 +1795,50 @@
         scaffolding.resizeMode = SETTINGS.resizeMode;
         scaffolding.setup();
         scaffolding.appendTo(appEl);
+
+        // Paint scaffolding's own wrapper with the app background color and
+        // make it fill the container. Scaffolding sets an inline background on
+        // its root element (.sc-root), which shows as white/black bars around
+        // the stage — CSS alone can't reliably override an inline style, so we
+        // set it directly on the element here. We also blanket-clear the
+        // background on the wrapper's descendant containers (but NOT the
+        // <canvas>, which draws the actual stage).
+        function paintWrapper() {
+          try {
+            var bg = ${JSON.stringify(cfg.background)};
+            var root =
+              appEl.querySelector('.sc-root') ||
+              appEl.firstElementChild ||
+              null;
+            if (root) {
+              root.style.background = bg;
+              root.style.width = '100%';
+              root.style.height = '100%';
+              var divs = root.querySelectorAll('div');
+              for (var i = 0; i < divs.length; i++) {
+                divs[i].style.background = 'transparent';
+              }
+            }
+            appEl.style.background = bg;
+          } catch (e) {}
+        }
+
         // Force a relayout once the DOM has settled so the stage fills the
-        // viewport correctly on first paint (esp. dynamic-resize on mobile).
-        try {
-          if (typeof scaffolding.relayout === 'function') {
-            setTimeout(function () { scaffolding.relayout(); }, 0);
-          }
-        } catch (e) {}
+        // viewport correctly on first paint (esp. dynamic-resize on mobile),
+        // then repaint the wrapper (relayout can recreate/restyle elements).
+        function settle() {
+          try {
+            if (typeof scaffolding.relayout === 'function') scaffolding.relayout();
+          } catch (e) {}
+          paintWrapper();
+        }
+        paintWrapper();
+        setTimeout(settle, 0);
+        setTimeout(settle, 250);
+        window.addEventListener('resize', paintWrapper);
+        window.addEventListener('orientationchange', function () {
+          setTimeout(settle, 100);
+        });
         window.scaffolding = scaffolding;
         window.vm = scaffolding.vm;
         var vm = scaffolding.vm;

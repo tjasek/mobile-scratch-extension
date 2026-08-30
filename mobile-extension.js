@@ -6,7 +6,8 @@
  *   - Scroll / swipe events with direction and delta reporters.
  *   - Screen orientation events (portrait / landscape) + boolean checks.
  *   - Device orientation sensor (azimuth / pitch / roll) mirroring AppInventor's
- *     OrientationSensor.
+ *     OrientationSensor, plus directional tilt hats (left / right / forward /
+ *     back) and a tilt-direction reporter.
  *   - Device motion / shake detection mirroring AppInventor's AccelerometerSensor.
  *   - A one-click "Build mobile app" button that hands the current project off to
  *     the TurboWarp packager so it can be wrapped as an installable mobile app.
@@ -25,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.9/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.3.0/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -64,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.9';
+  const EXTENSION_VERSION = '1.3.0';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -151,6 +152,11 @@
       this.azimuth = 0; // compass heading, 0..360
       this.pitch = 0; // front/back tilt, degrees
       this.roll = 0; // left/right tilt, degrees
+      // Which way the device is currently tilted past a threshold, or '' when
+      // roughly flat/upright. One of: '', 'left', 'right', 'forward', 'back'.
+      this.tiltDirection = '';
+      // Degrees past level before a tilt counts as a direction (deadzone).
+      this.tiltThreshold = 15;
       this.orientationMode = 'portrait';
       try {
         this.orientationMode = this._readOrientationMode();
@@ -561,6 +567,16 @@
         if (event.beta != null) this.pitch = round2(event.beta);
         if (event.gamma != null) this.roll = round2(event.gamma);
         this._startHats('whenTilted');
+
+        // Resolve a single dominant tilt direction from pitch (beta) and roll
+        // (gamma). Left/right come from gamma; forward/back from beta. Whichever
+        // axis is tilted more (past the threshold) wins.
+        const dir = this._computeTiltDirection();
+        // Always fire the direction hat so "any" and the matching direction
+        // run; the predicate filters by the selected menu value.
+        this._startHats('whenTiltedDirection', { DIRECTION: dir || 'any' });
+        // Track the current direction so the reporter + edge logic have it.
+        this.tiltDirection = dir;
       });
 
       // ---- Device motion / shake ------------------------------------
@@ -708,6 +724,30 @@
       }
       // Note: positive wheel deltaY means scrolling *down*.
       return dy > 0 ? 'down' : 'up';
+    }
+
+    /**
+     * Decide the dominant tilt direction from the current pitch (beta,
+     * front/back) and roll (gamma, left/right), or '' when roughly level.
+     *   - roll (gamma):  > 0 tilts right, < 0 tilts left
+     *   - pitch (beta):  > 0 tilts back (top toward you), < 0 tilts forward
+     * Whichever axis is further past the deadzone wins, so a single dominant
+     * direction is reported (matching how AppInventor's orientation feels).
+     * @returns {''|'left'|'right'|'forward'|'back'}
+     */
+    _computeTiltDirection() {
+      const t = this.tiltThreshold;
+      const roll = this.roll; // gamma
+      const pitch = this.pitch; // beta
+      const absRoll = Math.abs(roll);
+      const absPitch = Math.abs(pitch);
+      // Nothing past the deadzone → level.
+      if (absRoll < t && absPitch < t) return '';
+      // Pick the axis that is tilted more.
+      if (absRoll >= absPitch) {
+        return roll > 0 ? 'right' : 'left';
+      }
+      return pitch > 0 ? 'back' : 'forward';
     }
 
     // ----------------------------------------------------------------
@@ -955,6 +995,36 @@
             isEdgeActivated: false,
           },
           {
+            opcode: 'whenTiltedDirection',
+            blockType: BlockType.EVENT,
+            text: 'when device tilted [DIRECTION]',
+            isEdgeActivated: false,
+            arguments: {
+              DIRECTION: {
+                type: ArgumentType.STRING,
+                menu: 'TILT_DIR_MENU',
+                defaultValue: 'left',
+              },
+            },
+          },
+          {
+            opcode: 'isTiltedDirection',
+            blockType: BlockType.BOOLEAN,
+            text: 'device tilted [DIRECTION]?',
+            arguments: {
+              DIRECTION: {
+                type: ArgumentType.STRING,
+                menu: 'TILT_DIR_MENU',
+                defaultValue: 'left',
+              },
+            },
+          },
+          {
+            opcode: 'getTiltDirection',
+            blockType: BlockType.REPORTER,
+            text: 'tilt direction',
+          },
+          {
             opcode: 'whenShaken',
             blockType: BlockType.EVENT,
             text: 'when device shaken',
@@ -1015,6 +1085,13 @@
             { text: 'azimuth (compass)', value: 'azimuth' },
             { text: 'pitch (front-back)', value: 'pitch' },
             { text: 'roll (left-right)', value: 'roll' },
+          ],
+          TILT_DIR_MENU: [
+            { text: 'any', value: 'any' },
+            { text: 'left', value: 'left' },
+            { text: 'right', value: 'right' },
+            { text: 'forward (top down)', value: 'forward' },
+            { text: 'back (top up)', value: 'back' },
           ],
           AXIS3_MENU: [
             { text: 'x', value: 'x' },
@@ -1121,6 +1198,29 @@
     whenTilted() {
       this._ensureOrientationChosen();
       return true;
+    }
+
+    // Directional tilt hat. We fire it with the current direction; the
+    // predicate lets it run only when the chosen menu value matches (or 'any').
+    whenTiltedDirection(args) {
+      this._ensureOrientationChosen();
+      const wanted = Cast.toString(args.DIRECTION);
+      if (wanted === 'any' || wanted === '') return this.tiltDirection !== '';
+      return wanted === this.tiltDirection;
+    }
+
+    isTiltedDirection(args) {
+      this._ensureOrientationChosen();
+      const wanted = Cast.toString(args.DIRECTION);
+      if (wanted === 'any' || wanted === '') return this.tiltDirection !== '';
+      return wanted === this.tiltDirection;
+    }
+
+    getTiltDirection() {
+      this._ensureOrientationChosen();
+      // Report 'level' rather than an empty string when the device is flat, so
+      // the reporter is readable in the app.
+      return this.tiltDirection === '' ? 'level' : this.tiltDirection;
     }
 
     whenShaken() {

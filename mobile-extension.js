@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.0/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.1/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.4.0';
+  const EXTENSION_VERSION = '1.4.1';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -638,7 +638,11 @@
     getInfo() {
       return {
         id: EXTENSION_ID,
-        name: 'Mobile Events',
+        // Show the version in the extension name so it's visible on the
+        // library card and in the block palette header.
+        name: `Mobile Events v${EXTENSION_VERSION}`,
+        // Shown on the extension library card in Gandi/Cocrea.
+        description: `AppInventor-style mobile events for Scratch (v${EXTENSION_VERSION}).`,
         color1: '#4C97FF',
         color2: '#3373CC',
         color3: '#2E5FA3',

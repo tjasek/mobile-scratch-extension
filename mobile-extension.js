@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.4/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.5/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -44,15 +44,27 @@
   })();
 
   const {
-    runtime,
     ArgumentType,
     BlockType,
     TargetType,
     Cast,
   } = Scratch;
 
+  // Resolve the VM runtime across hosts. Gandi/Cocrea exposes it as
+  // `Scratch.runtime`, but the TurboWarp packager's scaffolding runtime does
+  // NOT — there the runtime lives at `Scratch.vm.runtime` (per the TurboWarp
+  // unsandboxed-extension API). Falling back through both is what makes the
+  // events fire in a packaged build; using only `Scratch.runtime` left
+  // `runtime` undefined in packaged apps, so no listeners bound and startHats
+  // never ran.
+  const runtime =
+    Scratch.runtime ||
+    (Scratch.vm && Scratch.vm.runtime) ||
+    (typeof window !== 'undefined' && window.vm && window.vm.runtime) ||
+    null;
+
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.4';
+  const EXTENSION_VERSION = '1.2.5';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -1488,7 +1500,14 @@
         const parts = [];
         parts.push("'use strict';");
         parts.push(
-          'const { runtime, ArgumentType, BlockType, TargetType, Cast } = Scratch;'
+          'const { ArgumentType, BlockType, TargetType, Cast } = Scratch;'
+        );
+        // Resolve runtime across hosts (Gandi: Scratch.runtime; TurboWarp
+        // scaffolding: Scratch.vm.runtime). This is the fix that makes events
+        // fire in packaged builds.
+        parts.push(
+          'const runtime = Scratch.runtime || (Scratch.vm && Scratch.vm.runtime) || ' +
+            "(typeof window !== 'undefined' && window.vm && window.vm.runtime) || null;"
         );
         parts.push(`const EXTENSION_ID = ${JSON.stringify(EXTENSION_ID)};`);
         parts.push(

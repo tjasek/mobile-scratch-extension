@@ -19,16 +19,28 @@
 (function (Scratch) {
   'use strict';
 
-  // Capture the URL this extension was loaded from, so the built app can fetch
-  // this same source and bake it into the packaged runtime (the packaged
-  // project references the `mobileEvents` extension and won't run without it).
+  // The published URL of this extension. The built app fetches this source and
+  // bakes it into the packaged runtime (the packaged project references the
+  // `mobileEvents` extension and won't run without it). Cocrea/Gandi loads
+  // extensions by fetching + eval (not a <script src>), so document.currentScript
+  // is usually unavailable — hence we fall back to this known published URL.
+  const DEFAULT_SELF_URL =
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.3/mobile-extension.js';
+
+  // Best-effort detection of the URL this extension was loaded from, with the
+  // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
   const SELF_URL = (function () {
+    try {
+      if (typeof window !== 'undefined' && window.MOBILE_EXTENSION_SELF_URL) {
+        return window.MOBILE_EXTENSION_SELF_URL;
+      }
+    } catch (e) { /* ignore */ }
     try {
       if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) {
         return document.currentScript.src;
       }
     } catch (e) { /* ignore */ }
-    return (typeof window !== 'undefined' && window.MOBILE_EXTENSION_SELF_URL) || null;
+    return DEFAULT_SELF_URL;
   })();
 
   const {
@@ -40,7 +52,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.2';
+  const EXTENSION_VERSION = '1.2.3';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -1358,12 +1370,6 @@
 
     /** Fetch this extension's own source text (for baking into the build). */
     async _loadSelfSource() {
-      if (!SELF_URL) {
-        throw new Error(
-          'Could not determine this extension URL to bundle it into the app. ' +
-            'Set window.MOBILE_EXTENSION_SELF_URL to the extension URL and rebuild.'
-        );
-      }
       try {
         const res = await fetch(SELF_URL);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1373,7 +1379,8 @@
           'Could not fetch the extension source to bundle it into the app (' +
             (e && e.message ? e.message : e) +
             '). The build needs to reach ' +
-            SELF_URL
+            SELF_URL +
+            ' — set window.MOBILE_EXTENSION_SELF_URL if your copy lives elsewhere.'
         );
       }
     }

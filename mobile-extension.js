@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.3/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.4/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.4.3';
+  const EXTENSION_VERSION = '1.4.4';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -378,9 +378,7 @@
           this.scrollDeltaX,
           this.scrollDeltaY
         );
-        this._startHats('whenScrolled', {
-          DIRECTION: this.lastScrollDirection,
-        });
+        this._fireScrollHats();
         // Auto-clear the transient delta shortly after the gesture.
         clearTimeout(this._scrollResetTimer);
         this._scrollResetTimer = setTimeout(() => {
@@ -407,7 +405,7 @@
         this.scrollDeltaX = dx;
         this.scrollDeltaY = dy;
         this.lastScrollDirection = this._directionFromDelta(dx, dy);
-        this._startHats('whenScrolled', { DIRECTION: this.lastScrollDirection });
+        this._fireScrollHats();
       };
       target.addEventListener('touchstart', onSwipeStart, { passive: true });
       window.addEventListener('touchend', onSwipeEnd, { passive: true });
@@ -447,10 +445,8 @@
         // (gamma). Left/right come from gamma; forward/back from beta. Whichever
         // axis is tilted more (past the threshold) wins.
         const dir = this._computeTiltDirection();
-        // Always fire the direction hat so "any" and the matching direction
-        // run; the predicate filters by the selected menu value.
-        this._startHats('whenTiltedDirection', { DIRECTION: dir || 'any' });
-        // Track the current direction so the reporter + edge logic have it.
+        // Track the current direction so the reporter + per-direction hats
+        // have it.
         this.tiltDirection = dir;
         // Also fire the dedicated per-direction hats (separate blocks). Only
         // the one matching the current direction will pass its predicate.
@@ -605,6 +601,16 @@
       }
       // Note: positive wheel deltaY means scrolling *down*.
       return dy > 0 ? 'down' : 'up';
+    }
+
+    // Fire the generic scroll hat plus the matching per-direction hat.
+    _fireScrollHats() {
+      this._startHats('whenScrolledAny');
+      const d = this.lastScrollDirection;
+      if (d === 'up') this._startHats('whenScrolledUp');
+      else if (d === 'down') this._startHats('whenScrolledDown');
+      else if (d === 'left') this._startHats('whenScrolledLeft');
+      else if (d === 'right') this._startHats('whenScrolledRight');
     }
 
     /**
@@ -772,18 +778,38 @@
 
           // ─── Scroll / swipe ──────────────────────────────────
           '---Scroll & Swipe',
+          // NOTE: Gandi/Cocrea does not render EVENT (hat) blocks that carry a
+          // menu argument — doing so silently drops the rest of the palette.
+          // So scroll/tilt direction hats are split into separate no-arg hats.
           {
-            opcode: 'whenScrolled',
+            opcode: 'whenScrolledAny',
             blockType: BlockType.EVENT,
-            text: 'when scrolled [DIRECTION]',
+            text: 'when scrolled',
             isEdgeActivated: false,
-            arguments: {
-              DIRECTION: {
-                type: ArgumentType.STRING,
-                menu: 'SCROLL_DIR_MENU',
-                defaultValue: 'any',
-              },
-            },
+          },
+          {
+            opcode: 'whenScrolledUp',
+            blockType: BlockType.EVENT,
+            text: 'when scrolled up',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenScrolledDown',
+            blockType: BlockType.EVENT,
+            text: 'when scrolled down',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenScrolledLeft',
+            blockType: BlockType.EVENT,
+            text: 'when scrolled left',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenScrolledRight',
+            blockType: BlockType.EVENT,
+            text: 'when scrolled right',
+            isEdgeActivated: false,
           },
           {
             opcode: 'getScrollDirection',
@@ -854,21 +880,8 @@
             text: 'when device tilts',
             isEdgeActivated: false,
           },
-          {
-            opcode: 'whenTiltedDirection',
-            blockType: BlockType.EVENT,
-            text: 'when device tilted [DIRECTION]',
-            isEdgeActivated: false,
-            arguments: {
-              DIRECTION: {
-                type: ArgumentType.STRING,
-                menu: 'TILT_DIR_MENU',
-                defaultValue: 'left',
-              },
-            },
-          },
-          // Dedicated per-direction hats (separate blocks) for people who
-          // prefer them over the menu version above.
+          // Per-direction tilt hats (no menu — Gandi drops EVENT blocks that
+          // carry a menu argument).
           {
             opcode: 'whenTiltedLeft',
             blockType: BlockType.EVENT,
@@ -943,21 +956,9 @@
         ],
 
         menus: {
-          // All menus use the object form with acceptReporters. Menus attached
-          // to EVENT/hat blocks (SCROLL_DIR_MENU, TILT_DIR_MENU) MUST be
-          // acceptReporters:false per the Scratch/TurboWarp hat rules — a hat
-          // menu that omits this can make the runtime reject the block (and
-          // silently drop the rest of the section).
-          SCROLL_DIR_MENU: {
-            acceptReporters: false,
-            items: [
-              { text: 'any', value: 'any' },
-              { text: 'up', value: 'up' },
-              { text: 'down', value: 'down' },
-              { text: 'left', value: 'left' },
-              { text: 'right', value: 'right' },
-            ],
-          },
+          // Menus are only attached to COMMAND/REPORTER/BOOLEAN blocks (never
+          // EVENT hats — Gandi drops hat blocks that carry a menu). Object form
+          // with acceptReporters is the format the Gandi example uses.
           AXIS_MENU: {
             acceptReporters: true,
             items: [
@@ -981,7 +982,7 @@
             ],
           },
           TILT_DIR_MENU: {
-            acceptReporters: false,
+            acceptReporters: true,
             items: [
               { text: 'any', value: 'any' },
               { text: 'left', value: 'left' },
@@ -1010,11 +1011,24 @@
     //  values in `args`; we compare against the fields we fired with.
     // ----------------------------------------------------------------
 
-    whenScrolled(args) {
-      this._ensureOrientationChosen();
-      const wanted = Cast.toString(args.DIRECTION);
-      if (wanted === 'any' || wanted === '') return true;
-      return wanted === this.lastScrollDirection;
+    whenScrolledAny() {
+      return true;
+    }
+
+    whenScrolledUp() {
+      return this.lastScrollDirection === 'up';
+    }
+
+    whenScrolledDown() {
+      return this.lastScrollDirection === 'down';
+    }
+
+    whenScrolledLeft() {
+      return this.lastScrollDirection === 'left';
+    }
+
+    whenScrolledRight() {
+      return this.lastScrollDirection === 'right';
     }
 
     // The remaining event hats have no argument and always run when started.
@@ -1098,15 +1112,6 @@
     whenTilted() {
       this._ensureOrientationChosen();
       return true;
-    }
-
-    // Directional tilt hat. We fire it with the current direction; the
-    // predicate lets it run only when the chosen menu value matches (or 'any').
-    whenTiltedDirection(args) {
-      this._ensureOrientationChosen();
-      const wanted = Cast.toString(args.DIRECTION);
-      if (wanted === 'any' || wanted === '') return this.tiltDirection !== '';
-      return wanted === this.tiltDirection;
     }
 
     // Dedicated per-direction hats. Each is fired only for its direction, and

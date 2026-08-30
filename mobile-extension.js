@@ -28,7 +28,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.0';
+  const EXTENSION_VERSION = '1.2.1';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -42,6 +42,12 @@
   const APP_INVENTOR_URL =
     (typeof window !== 'undefined' && window.MOBILE_APP_INVENTOR_URL) ||
     'https://ai2.appinventor.mit.edu';
+
+  // JSZip is only needed as a fallback, to assemble a .sb3 when the host VM
+  // doesn't expose saveProjectSb3(). Loaded on demand.
+  const JSZIP_URL =
+    (typeof window !== 'undefined' && window.MOBILE_JSZIP_URL) ||
+    'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
 
   // Standard mobile viewport presets (portrait). Landscape swaps the axes.
   const VIEWPORT_PRESETS = {
@@ -1182,16 +1188,60 @@
     //  gracefully.
     // ----------------------------------------------------------------
 
-    async _exportProjectSb3() {
-      const vm =
-        (this.runtime && this.runtime.vm) ||
-        (typeof window !== 'undefined' && window.vm) ||
-        null;
+    /**
+     * Locate the live scratch-vm instance. Gandi/Cocrea does NOT expose it as
+     * runtime.vm; the reliable paths are Scratch.vm, or the VM stashed on the
+     * runtime's React QUESTION handler (the same trick the lpp/moreDataTypes
+     * extensions use). We try every known location.
+     */
+    _getVM() {
+      // 1. Directly on the Scratch global (most Gandi builds).
+      try {
+        if (typeof Scratch !== 'undefined' && Scratch.vm) return Scratch.vm;
+      } catch (e) { /* ignore */ }
+      // 2. Standard TurboWarp / some hosts.
+      if (this.runtime && this.runtime.vm) return this.runtime.vm;
+      if (typeof window !== 'undefined' && window.vm) return window.vm;
+      // 3. runtime._events references (Gandi editor).
+      try {
+        const events = this.runtime && this.runtime._events;
+        if (events && events.QUESTION) {
+          const handler = Array.isArray(events.QUESTION)
+            ? events.QUESTION[events.QUESTION.length - 1]
+            : events.QUESTION;
+          // The handler is a bound React method; grab its `this` without calling.
+          const origApply = Function.prototype.apply;
+          // eslint-disable-next-line no-extend-native
+          Function.prototype.apply = (thisArg) => thisArg;
+          let props = null;
+          try {
+            props = handler();
+          } finally {
+            // eslint-disable-next-line no-extend-native
+            Function.prototype.apply = origApply;
+          }
+          if (props && props.props && props.props.vm) return props.props.vm;
+          if (props && props.vm) return props.vm;
+        }
+      } catch (e) { /* ignore */ }
+      // 4. The runtime may itself be a VM-like object exposing toJSON.
+      if (this.runtime && typeof this.runtime.toJSON === 'function') {
+        return this.runtime;
+      }
+      return null;
+    }
 
-      // Newer VMs expose saveProjectSb3() returning a Blob (or Uint8Array).
-      if (vm && typeof vm.saveProjectSb3 === 'function') {
+    async _exportProjectSb3() {
+      const vm = this._getVM();
+      if (!vm) {
+        throw new Error(
+          'Could not find the project VM. Run this inside the Cocrea/Gandi editor with a project open.'
+        );
+      }
+
+      // Preferred: a VM that can serialize a full .sb3 itself.
+      if (typeof vm.saveProjectSb3 === 'function') {
         const result = await vm.saveProjectSb3('uint8array').catch(async () => {
-          // Some VMs ignore the type argument and return a Blob.
           const blob = await vm.saveProjectSb3();
           const buf = await blob.arrayBuffer();
           return new Uint8Array(buf);
@@ -1202,9 +1252,52 @@
         }
       }
 
+      // Fallback: build the .sb3 from project.json + assets ourselves.
+      if (typeof vm.toJSON === 'function') {
+        return this._buildSb3FromVM(vm);
+      }
+
       throw new Error(
-        'Could not export the project. This build feature needs to run inside the Cocrea/Gandi editor where the project VM is available.'
+        'The project VM does not support export (no saveProjectSb3 or toJSON).'
       );
+    }
+
+    /**
+     * Assemble a .sb3 (zip of project.json + all costume/sound assets) from a
+     * VM that only exposes toJSON(). Assets are read from the runtime's
+     * storage-backed asset cache on each target.
+     */
+    async _buildSb3FromVM(vm) {
+      const JSZip = await this._loadJSZip();
+      const zip = new JSZip();
+
+      const projectJson = vm.toJSON();
+      zip.file('project.json', typeof projectJson === 'string' ? projectJson : JSON.stringify(projectJson));
+
+      // Collect unique assets (costumes + sounds) across all targets.
+      const runtime = vm.runtime || this.runtime;
+      const seen = {};
+      const targets = (runtime && runtime.targets) || [];
+      targets.forEach((target) => {
+        const sprite = target && target.sprite;
+        if (!sprite) return;
+        const media = [].concat(sprite.costumes || [], sprite.sounds || []);
+        media.forEach((item) => {
+          const asset = item && item.asset;
+          if (!asset) return;
+          const dataFormat = asset.dataFormat || (item.md5ext && item.md5ext.split('.')[1]);
+          const assetId = asset.assetId || item.assetId;
+          if (!assetId || !dataFormat) return;
+          const filename = `${assetId}.${dataFormat}`;
+          if (seen[filename]) return;
+          seen[filename] = true;
+          // asset.data is a Uint8Array of the raw file bytes.
+          if (asset.data) zip.file(filename, asset.data);
+        });
+      });
+
+      const blob = await zip.generateAsync({ type: 'uint8array' });
+      return blob instanceof Uint8Array ? blob : new Uint8Array(blob);
     }
 
     // ----------------------------------------------------------------
@@ -1433,8 +1526,35 @@
     }
 
     // ----------------------------------------------------------------
-    //  Utility: downloads, encoding, escaping
+    //  Utility: JSZip loader (fallback sb3 build), downloads, encoding
     // ----------------------------------------------------------------
+
+    _loadJSZip() {
+      if (typeof window !== 'undefined' && window.JSZip) {
+        return Promise.resolve(window.JSZip);
+      }
+      // Reuse the VM's bundled JSZip if the host exposes it.
+      try {
+        if (
+          typeof Scratch !== 'undefined' &&
+          Scratch.vm &&
+          Scratch.vm.exports &&
+          Scratch.vm.exports.JSZip
+        ) {
+          return Promise.resolve(Scratch.vm.exports.JSZip);
+        }
+      } catch (e) { /* ignore */ }
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = JSZIP_URL;
+        script.onload = () => {
+          if (window.JSZip) resolve(window.JSZip);
+          else reject(new Error('JSZip failed to load'));
+        };
+        script.onerror = () => reject(new Error('Could not load JSZip from ' + JSZIP_URL));
+        document.head.appendChild(script);
+      });
+    }
 
     _triggerDownload(blob, filename) {
       const url = URL.createObjectURL(blob);

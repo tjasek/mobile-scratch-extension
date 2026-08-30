@@ -20,7 +20,7 @@ one of these URLs. The **Mobile Events** category then appears in the palette.
 **Pinned release (stable, recommended for sharing):**
 
 ```
-https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.0/mobile-extension.js
+https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.1/mobile-extension.js
 ```
 
 **Latest on main (may be cached by jsDelivr for a few hours):**

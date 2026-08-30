@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.3/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.4/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -52,7 +52,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.3';
+  const EXTENSION_VERSION = '1.2.4';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -171,6 +171,19 @@
         maxClones: 300, // clone limit (Infinity if disabled)
         resizeMode: 'preserve-ratio', // preserve-ratio | stretch | dynamic-resize
         username: 'player', // default username
+        // --- packaging / output options ------------------------------
+        // How to include the Scratch runtime in the built HTML:
+        //   'inline' — embed the whole ~4 MB scaffolding runtime (fully
+        //              offline, large file).
+        //   'slim'   — reference the runtime from the CDN via <script src>
+        //              (tiny file, needs a network connection at runtime).
+        slimBuild: false,
+        // Where the built app gets this extension's code:
+        //   'baked'  — embed the CURRENTLY RUNNING extension source (includes
+        //              any blocks you just added/edited). Recommended.
+        //   'remote' — fetch the published CDN copy at build time (only has
+        //              blocks present in the published release).
+        extensionSource: 'baked',
       };
 
       // Cached fetch of the scaffolding runtime so repeated builds are fast.
@@ -652,6 +665,12 @@
             text: '⚙️ Configure build settings',
             onClick: () => this.configureBuildSettings(),
             func: 'configureBuildSettings',
+          },
+          {
+            blockType: BlockType.BUTTON,
+            text: '🪶 Toggle slim build (small HTML)',
+            onClick: () => this.toggleSlimBuild(),
+            func: 'toggleSlimBuild',
           },
           {
             blockType: BlockType.BUTTON,
@@ -1139,11 +1158,22 @@
         ['fencing', 'Keep sprites on stage (fencing)'],
         ['miscLimits', 'Runtime limits'],
         ['fullscreen', 'Fullscreen'],
+        // Slim build is stored as slimBuild; label describes the ON state.
+        ['slimBuild', 'Slim build (load runtime from CDN — tiny file, needs internet)'],
       ];
       if (typeof prompt !== 'function') return;
       // Present the current state and let the user type which ones to flip.
       const lines = toggles.map(
         (t, i) => `${i + 1}. ${t[1]}: ${this.appConfig[t[0]] ? 'ON' : 'OFF'}`
+      );
+      // Extension source is a mode, not a simple toggle; expose it too.
+      const extLineIndex = toggles.length + 1;
+      lines.push(
+        `${extLineIndex}. Extension code in build: ${
+          this.appConfig.extensionSource === 'remote'
+            ? 'REMOTE (published CDN copy)'
+            : 'BAKED (your current blocks)'
+        }`
       );
       const answer = prompt(
         'Build settings — type the numbers to TOGGLE, separated by commas ' +
@@ -1155,11 +1185,38 @@
       String(answer)
         .split(',')
         .map((s) => parseInt(s.trim(), 10))
-        .filter((n) => !Number.isNaN(n) && n >= 1 && n <= toggles.length)
+        .filter((n) => !Number.isNaN(n) && n >= 1 && n <= extLineIndex)
         .forEach((n) => {
+          if (n === extLineIndex) {
+            // Flip between baked (default) and remote.
+            this.appConfig.extensionSource =
+              this.appConfig.extensionSource === 'remote' ? 'baked' : 'remote';
+            return;
+          }
           const key = toggles[n - 1][0];
           this.appConfig[key] = !this.appConfig[key];
         });
+    }
+
+    /**
+     * Flip between a slim build (runtime loaded from the CDN — a few KB HTML
+     * that needs internet) and a full inline build (~4 MB, fully offline).
+     */
+    toggleSlimBuild() {
+      this.appConfig.slimBuild = !this.appConfig.slimBuild;
+      try {
+        if (typeof alert === 'function') {
+          alert(
+            this.appConfig.slimBuild
+              ? 'Slim build ON — the exported HTML will be tiny and load the ' +
+                  'Scratch runtime from the internet at runtime.'
+              : 'Slim build OFF — the exported HTML will inline the full ' +
+                  'runtime (~4 MB) and run completely offline.'
+          );
+        }
+      } catch (e) {
+        /* non-interactive environment */
+      }
     }
 
     promptFramerate() {
@@ -1368,8 +1425,30 @@
       return uris;
     }
 
-    /** Fetch this extension's own source text (for baking into the build). */
+    /**
+     * Produce this extension's source text for baking into the build.
+     *
+     * By default we bake the CURRENTLY RUNNING source (appConfig.extensionSource
+     * === 'baked'), reconstructed from the live class + module helpers. This is
+     * what makes newly added/edited blocks actually show up in the built app —
+     * the old behavior of re-fetching a pinned CDN copy only ever shipped the
+     * published release's blocks.
+     *
+     * When appConfig.extensionSource === 'remote' we fall back to fetching the
+     * published copy from SELF_URL.
+     */
     async _loadSelfSource() {
+      if (this.appConfig.extensionSource !== 'remote') {
+        const live = this._getRunningExtensionSource();
+        if (live) return live;
+        // Reconstruction failed for some reason — fall through to the network
+        // copy so the build still succeeds (with a warning).
+        console.warn(
+          '[Mobile Events] could not reconstruct the running extension source; ' +
+            'falling back to the published copy at ' +
+            SELF_URL
+        );
+      }
       try {
         const res = await fetch(SELF_URL);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1385,6 +1464,68 @@
       }
     }
 
+    /**
+     * Reconstruct a complete, self-registering extension script from the code
+     * that is actually running right now. This guarantees the built app has
+     * exactly the blocks you see in the editor, including any you just added.
+     *
+     * The reconstruction re-declares the module-level constants and helpers the
+     * class depends on, then the class itself (via Function.prototype.toString),
+     * then a registration tail. The whole thing is meant to run inside the
+     * `(function(Scratch){ ... })(Scratch)` wrapper that _bakeProjectExtensions
+     * adds, so it reads `Scratch` from that argument — exactly like this file.
+     */
+    _getRunningExtensionSource() {
+      try {
+        const classSource = MobileEventsExtension.toString();
+        // Guard: a heavily minified/renamed class name would break the tail.
+        if (!/class\s+MobileEventsExtension\b/.test(classSource)) {
+          return null;
+        }
+
+        // Re-derive the runtime-configurable constants from their live values
+        // so forks/overrides (window.MOBILE_*_URL) are preserved in the build.
+        const parts = [];
+        parts.push("'use strict';");
+        parts.push(
+          'const { runtime, ArgumentType, BlockType, TargetType, Cast } = Scratch;'
+        );
+        parts.push(`const EXTENSION_ID = ${JSON.stringify(EXTENSION_ID)};`);
+        parts.push(
+          `const EXTENSION_VERSION = ${JSON.stringify(EXTENSION_VERSION)};`
+        );
+        parts.push(`const SELF_URL = ${JSON.stringify(SELF_URL)};`);
+        parts.push(`const SCAFFOLDING_URL = ${JSON.stringify(SCAFFOLDING_URL)};`);
+        parts.push(`const APP_INVENTOR_URL = ${JSON.stringify(APP_INVENTOR_URL)};`);
+        parts.push(`const JSZIP_URL = ${JSON.stringify(JSZIP_URL)};`);
+        parts.push(
+          `const VIEWPORT_PRESETS = ${JSON.stringify(VIEWPORT_PRESETS)};`
+        );
+
+        // Module-level helper functions, serialized from the live functions.
+        parts.push(`const clamp = ${clamp.toString()};`);
+        parts.push(`const round2 = ${round2.toString()};`);
+        parts.push(`${clientToStage.toString()}`);
+
+        // The extension class itself, verbatim from the running code.
+        parts.push(classSource);
+
+        // Registration tail (mirrors the bottom of this file).
+        parts.push(
+          'const extensionInstance = new MobileEventsExtension(runtime);'
+        );
+        parts.push('Scratch.extensions.register(extensionInstance);');
+
+        return parts.join('\n');
+      } catch (e) {
+        console.warn(
+          '[Mobile Events] failed to serialize running extension source:',
+          e
+        );
+        return null;
+      }
+    }
+
     // ----------------------------------------------------------------
     //  Build: assemble the standalone HTML app
     //
@@ -1394,15 +1535,27 @@
     // ----------------------------------------------------------------
 
     async _generateHtmlApp() {
-      const [projectData, scaffoldingSource, extensionURIs] = await Promise.all([
-        this._exportProjectSb3(),
-        this._loadScaffoldingSource(),
-        this._bakeProjectExtensions(),
-      ]);
+      const cfg = this.appConfig;
+      const slim = !!cfg.slimBuild;
+
+      // In slim mode we DON'T download/inline the ~4 MB runtime; we reference
+      // it from the CDN via <script src> instead. Only fetch what we need.
+      const tasks = [this._exportProjectSb3(), this._bakeProjectExtensions()];
+      if (!slim) {
+        tasks.push(this._loadScaffoldingSource());
+      }
+      const results = await Promise.all(tasks);
+      const projectData = results[0];
+      const extensionURIs = results[1];
+      const scaffoldingSource = slim ? null : results[2];
 
       const projectBase64 = this._uint8ToBase64(projectData);
-      const cfg = this.appConfig;
       const escapedTitle = this._escapeHtml(cfg.name);
+
+      // Runtime <script> tag: inline the source, or reference the CDN.
+      const runtimeScriptTag = slim
+        ? `<script src="${SCAFFOLDING_URL}"></script>`
+        : `<script>${scaffoldingSource}</script>`;
 
       // Note: the runtime is injected verbatim between script tags. It is a
       // trusted, well-known build artifact (the TurboWarp scaffolding player).
@@ -1431,7 +1584,7 @@
   <div id="loading">Loading…</div>
   <div id="error"><h1>Error</h1><pre id="error-text"></pre></div>
 
-  <script>${scaffoldingSource}</script>
+  ${runtimeScriptTag}
   <script>
     (function () {
       var PROJECT_BASE64 = "${projectBase64}";
@@ -1460,6 +1613,30 @@
       // extension), baked as data: URIs so the packaged runtime can load them.
       var EXTENSION_URIS = ${JSON.stringify(extensionURIs)};
 
+      // In slim builds the runtime is loaded from the CDN with <script src>,
+      // which may not be ready when this bootstrap runs. Wait for it (with a
+      // timeout) before starting. In inline builds it's already defined.
+      function whenScaffoldingReady(cb) {
+        if (typeof Scaffolding !== 'undefined' && Scaffolding.Scaffolding) {
+          cb();
+          return;
+        }
+        var waited = 0;
+        var timer = setInterval(function () {
+          if (typeof Scaffolding !== 'undefined' && Scaffolding.Scaffolding) {
+            clearInterval(timer);
+            cb();
+          } else if ((waited += 50) >= 30000) {
+            clearInterval(timer);
+            showError(new Error(
+              'Could not load the Scratch runtime from the network. ' +
+              'A slim build needs an internet connection on first run.'
+            ));
+          }
+        }, 50);
+      }
+
+      whenScaffoldingReady(function () {
       try {
         var scaffolding = new Scaffolding.Scaffolding();
         scaffolding.width = ${this._stageWidth()};
@@ -1530,6 +1707,7 @@
       } catch (e) {
         showError(e);
       }
+      });
     })();
   </script>
 </body>

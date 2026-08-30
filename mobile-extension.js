@@ -28,7 +28,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.1.1';
+  const EXTENSION_VERSION = '1.1.2';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -116,9 +116,9 @@
       this._scrollResetTimer = null;
 
       // --- per-sprite touch / drag state ------------------------------
-      // drawableID of the sprite currently under the active touch/drag, or null.
-      this._touchedDrawableID = null;
-      this._draggedDrawableID = null;
+      // The VM Target currently under the active touch/drag, or null.
+      this._touchedTarget = null;
+      this._draggedTarget = null;
       this._dragStartClient = null;
 
       // --- orientation state ------------------------------------------
@@ -215,10 +215,12 @@
       );
     }
 
-    _startHats(opcode, fields) {
+    _startHats(opcode, fields, optTarget) {
       // Guarded so a missing runtime API never crashes event handling.
+      // optTarget restricts the hat to a single sprite (used for per-sprite
+      // events so they don't fire on every sprite / the backdrop).
       if (this.runtime && typeof this.runtime.startHats === 'function') {
-        this.runtime.startHats(`${EXTENSION_ID}_${opcode}`, fields);
+        this.runtime.startHats(`${EXTENSION_ID}_${opcode}`, fields, optTarget);
       }
     }
 
@@ -319,13 +321,14 @@
         this.touchCount = this._countTouches(event, 1);
         // Which sprite is under this touch? (client pixel coords for pick)
         const client = this._clientFromEvent(event);
-        this._touchedDrawableID = this._pickDrawable(client.x, client.y);
-        this._draggedDrawableID = this._touchedDrawableID;
+        this._touchedTarget = this._pickTarget(client.x, client.y);
+        this._draggedTarget = this._touchedTarget;
         this._dragStartClient = client;
         this._startHats('whenTouched');
-        // Per-sprite: fire the sprite-touch hat (predicate filters the sprite).
-        if (this._touchedDrawableID != null) {
-          this._startHats('whenSpriteTouched');
+        // Per-sprite: fire the hat ONLY on the touched sprite via optTarget so
+        // it never runs for other sprites or on a backdrop tap.
+        if (this._touchedTarget) {
+          this._startHats('whenSpriteTouched', null, this._touchedTarget);
         }
       };
       const onPointerMove = (event) => {
@@ -334,14 +337,15 @@
         this.touchX = point.x;
         this.touchY = point.y;
         this._startHats('whenTouchMoved');
-        // Per-sprite drag: only after the pointer has moved a little.
-        if (this._draggedDrawableID != null && this._dragStartClient) {
+        // Per-sprite drag: only after the pointer has moved a little, and only
+        // on the sprite the drag started on.
+        if (this._draggedTarget && this._dragStartClient) {
           const client = this._clientFromEvent(event);
           const moved =
             Math.abs(client.x - this._dragStartClient.x) +
             Math.abs(client.y - this._dragStartClient.y);
           if (moved > 3) {
-            this._startHats('whenSpriteDragged');
+            this._startHats('whenSpriteDragged', null, this._draggedTarget);
           }
         }
       };
@@ -351,8 +355,8 @@
         }
         this.isTouching = false;
         this.touchCount = 0;
-        this._touchedDrawableID = null;
-        this._draggedDrawableID = null;
+        this._touchedTarget = null;
+        this._draggedTarget = null;
         this._dragStartClient = null;
       };
 
@@ -538,17 +542,28 @@
     }
 
     /**
-     * Does the given util's target correspond to the touched/dragged sprite?
-     * `pickedId` is a target id (preferred) or drawable id (fallback).
+     * Resolve a client (page) point to the actual sprite Target under it, or
+     * null for the backdrop / empty stage. Returns a real VM target so it can
+     * be passed to startHats() as optTarget (the reliable way to fire a hat on
+     * only one sprite).
      */
-    _isTargetTouched(util, pickedId) {
-      if (pickedId == null) return false;
-      const target = util && util.target;
-      if (!target || target.isStage) return false;
-      // Prefer matching by target id (handles clones/layers correctly).
-      if (target.id != null && target.id === pickedId) return true;
-      // Fallback for runtimes without getTargetIdForDrawableId.
-      return target.drawableID != null && target.drawableID === pickedId;
+    _pickTarget(clientX, clientY) {
+      const pickedId = this._pickDrawable(clientX, clientY);
+      if (pickedId == null) return null;
+      const vm = this.runtime && this.runtime.vm;
+      try {
+        if (vm && typeof vm.runtime === 'object' && typeof vm.runtime.getTargetById === 'function') {
+          const t = vm.runtime.getTargetById(pickedId);
+          if (t && !t.isStage) return t;
+        }
+        if (this.runtime && typeof this.runtime.getTargetById === 'function') {
+          const t = this.runtime.getTargetById(pickedId);
+          if (t && !t.isStage) return t;
+        }
+      } catch (e) {
+        /* fall through */
+      }
+      return null;
     }
 
     _countTouches(event, fallback) {
@@ -975,26 +990,37 @@
       return true;
     }
 
-    // Per-sprite hats: run for the sprite the touch/drag landed on.
+    // Per-sprite hats. These are already scoped to the correct sprite because
+    // we start them via startHats(opcode, null, target). The predicate is a
+    // second safety net: it confirms util.target is the touched/dragged sprite,
+    // so even a runtime that ignores optTarget won't fire on the wrong sprite
+    // or on a backdrop tap.
     whenSpriteTouched(args, util) {
       this._ensureOrientationChosen();
-      return this._isTargetTouched(util, this._touchedDrawableID);
+      return this._isRunningTarget(util, this._touchedTarget);
     }
 
     whenSpriteDragged(args, util) {
       this._ensureOrientationChosen();
-      return this._isTargetTouched(util, this._draggedDrawableID);
+      return this._isRunningTarget(util, this._draggedTarget);
     }
 
     isSpriteTouched(args, util) {
       this._ensureOrientationChosen();
       // True while a touch is active and it is over this sprite right now.
       if (!this.isTouching) return false;
-      const drawableID = this._pickDrawable(
-        // Convert current stage touch back to client pixels via the canvas rect.
-        ...this._stageTouchToClient()
-      );
-      return this._isTargetTouched(util, drawableID);
+      const target = this._pickTarget(...this._stageTouchToClient());
+      return this._isRunningTarget(util, target);
+    }
+
+    /** Is util.target the same VM target we picked? */
+    _isRunningTarget(util, pickedTarget) {
+      if (!pickedTarget) return false;
+      const target = util && util.target;
+      if (!target || target.isStage) return false;
+      if (target === pickedTarget) return true;
+      // Match by id as well (util.target may be a different wrapper instance).
+      return target.id != null && target.id === pickedTarget.id;
     }
 
     /** Current touch point (stage coords) back to client pixels for picking. */

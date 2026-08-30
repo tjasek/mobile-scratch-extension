@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.5/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.6/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -64,7 +64,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.5';
+  const EXTENSION_VERSION = '1.2.6';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -181,7 +181,10 @@
         fencing: true, // keep sprites on stage
         miscLimits: true, // misc runtime limits
         maxClones: 300, // clone limit (Infinity if disabled)
-        resizeMode: 'preserve-ratio', // preserve-ratio | stretch | dynamic-resize
+        // Fills the screen with no bars and no stretching (sprites keep their
+        // coordinates) — the best default for a mobile app. Change via the
+        // "Set resize mode" button.
+        resizeMode: 'dynamic-resize', // dynamic-resize | preserve-ratio | stretch
         username: 'player', // default username
         // --- packaging / output options ------------------------------
         // How to include the Scratch runtime in the built HTML:
@@ -207,6 +210,7 @@
       // orientation and then adjust the editor stage so they can preview it.
       this._orientationChosen = false;
       this._previewApplied = false;
+      this._previewWarned = false;
       this._eventsBound = false;
 
       // IMPORTANT: do NOT do heavy/synchronous DOM work here. Cocrea/Gandi
@@ -310,22 +314,71 @@
         this.appConfig.orientation === 'landscape' ? 'landscape' : 'portrait';
       const preset = VIEWPORT_PRESETS[mode];
       if (!preset) return;
-      try {
-        // TurboWarp/Gandi VMs expose setStageSize for custom stage dimensions.
-        if (this.runtime && typeof this.runtime.setStageSize === 'function') {
-          this.runtime.setStageSize(preset.width, preset.height);
-          this._previewApplied = true;
-        } else if (
-          this.runtime &&
-          this.runtime.vm &&
-          typeof this.runtime.vm.setStageSize === 'function'
-        ) {
-          this.runtime.vm.setStageSize(preset.width, preset.height);
-          this._previewApplied = true;
+
+      const w = preset.width;
+      const h = preset.height;
+      const runtime = this.runtime;
+      const vm =
+        (runtime && runtime.vm) ||
+        (typeof Scratch !== 'undefined' && Scratch.vm) ||
+        (typeof window !== 'undefined' && window.vm) ||
+        null;
+
+      // Try every known way a Scratch fork lets you set a custom stage size.
+      // Gandi/Cocrea, TurboWarp and vanilla scratch-vm all differ here, so we
+      // attempt them in order and stop at the first that doesn't throw.
+      const attempts = [
+        () => vm && typeof vm.setStageSize === 'function' && vm.setStageSize(w, h),
+        () =>
+          runtime &&
+          typeof runtime.setStageSize === 'function' &&
+          runtime.setStageSize(w, h),
+        // Gandi emits a runtime event that the GUI listens to.
+        () =>
+          runtime &&
+          typeof runtime.emit === 'function' &&
+          (runtime.emit('STAGE_SIZE_CHANGED', w, h), true),
+        () =>
+          vm &&
+          typeof vm.emit === 'function' &&
+          (vm.emit('STAGE_SIZE_CHANGED', w, h), true),
+        // Some forks store dimensions on the runtime directly + relayout.
+        () => {
+          if (!runtime) return false;
+          runtime.stageWidth = w;
+          runtime.stageHeight = h;
+          if (runtime.renderer && typeof runtime.renderer.setStageSize === 'function') {
+            runtime.renderer.setStageSize(0, w, h, 0);
+          }
+          return true;
+        },
+      ];
+
+      let applied = false;
+      for (const attempt of attempts) {
+        try {
+          if (attempt()) {
+            applied = true;
+            break;
+          }
+        } catch (e) {
+          /* try the next strategy */
         }
-      } catch (e) {
-        // Stage resizing is a preview nicety; never let it break blocks.
-        console.warn('[Mobile Events] could not resize stage for preview:', e);
+      }
+
+      this._previewApplied = applied;
+      if (!applied && !this._previewWarned) {
+        this._previewWarned = true;
+        // Don't spam; explain once. The build still exports the right shape.
+        console.warn(
+          '[Mobile Events] this editor does not support changing the stage ' +
+            'dimensions, so the ' +
+            mode +
+            ' preview could not be applied here. The exported app will still ' +
+            'use the ' +
+            mode +
+            ' layout.'
+        );
       }
     }
 
@@ -695,6 +748,12 @@
             text: '🖼 Set resize mode',
             onClick: () => this.promptResizeMode(),
             func: 'promptResizeMode',
+          },
+          {
+            blockType: BlockType.BUTTON,
+            text: '🎨 Set app background color',
+            onClick: () => this.promptBackgroundColor(),
+            func: 'promptBackgroundColor',
           },
           {
             blockType: BlockType.BUTTON,
@@ -1244,7 +1303,13 @@
     promptResizeMode() {
       if (typeof prompt !== 'function') return;
       const answer = prompt(
-        'Resize mode — type one of: preserve-ratio, stretch, dynamic-resize',
+        'How should the stage fill the phone screen? Type one of:\n\n' +
+          '• dynamic-resize — fills the whole screen, no bars, no stretching. ' +
+          'More of the stage becomes visible on tall/wide screens. Sprites keep ' +
+          'their x/y coordinates. Best for a mobile app.\n\n' +
+          '• preserve-ratio — keeps the exact aspect ratio; any leftover space ' +
+          'is filled with your app background color (no black/white bars).\n\n' +
+          '• stretch — fills the screen but distorts the picture.',
         this.appConfig.resizeMode
       );
       if (answer == null) return;
@@ -1259,6 +1324,28 @@
       const answer = prompt('Default username for the app:', this.appConfig.username);
       if (answer == null) return;
       this.appConfig.username = String(answer).trim() || 'player';
+    }
+
+    /**
+     * The app background color fills the entire page — behind the stage and in
+     * any letterbox area (preserve-ratio) — so the app looks seamless instead
+     * of showing black/white borders. Tip: set this to match your backdrop.
+     */
+    promptBackgroundColor() {
+      if (typeof prompt !== 'function') return;
+      const answer = prompt(
+        'App background color (fills the whole screen behind the stage).\n' +
+          'Use a hex color like #000000, #ffffff, or #4C97FF:',
+        this.appConfig.background
+      );
+      if (answer == null) return;
+      const value = String(answer).trim();
+      // Accept #rgb / #rrggbb; otherwise leave unchanged.
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
+        this.appConfig.background = value;
+      } else if (typeof alert === 'function') {
+        alert('That does not look like a hex color (e.g. #000000). Keeping the current color.');
+      }
     }
 
     promptMaxClones() {
@@ -1587,12 +1674,31 @@
 <meta name="theme-color" content="${cfg.background}">
 <title>${escapedTitle}</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: ${cfg.background}; }
-  #app { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: ${cfg.background};
+  }
+  /* The player container fills the whole viewport and centers the stage.
+     Any area not covered by the stage (letterbox bars in preserve-ratio)
+     shows this background color, so it looks like one seamless app instead
+     of black/white bars. */
+  #app {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    background: ${cfg.background};
+  }
+  /* Scaffolding renders into elements with sc- prefixed classes. Make its
+     wrapper and canvas transparent so our background shows through the
+     letterbox area, and let the canvas fill the space it's given. */
+  #app > div, #app .sc-canvas, #app canvas {
+    background: transparent !important;
+  }
+  #app canvas { display: block; }
   #loading, #error {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; color: #fff; font-family: sans-serif;
     text-align: center; padding: 16px; box-sizing: border-box;
+    background: ${cfg.background};
   }
   #error { display: none; }
   #error pre { max-width: 90%; white-space: pre-wrap; text-align: left; overflow: auto; }
@@ -1658,11 +1764,28 @@
       whenScaffoldingReady(function () {
       try {
         var scaffolding = new Scaffolding.Scaffolding();
+        // Base stage size = the real project stage size, so sprite coordinates
+        // stay valid. resizeMode then decides how it fills the screen:
+        //   'preserve-ratio'  keep aspect ratio, letterbox the rest (bars use
+        //                     the app background color via CSS, so no black/
+        //                     white borders).
+        //   'stretch'         fill the screen, distorting the aspect ratio.
+        //   'dynamic-resize'  grow the *visible* stage to fill the screen while
+        //                     keeping sprite coordinates — best "full screen"
+        //                     feel; more of the stage becomes visible on tall
+        //                     or wide screens.
         scaffolding.width = ${this._stageWidth()};
         scaffolding.height = ${this._stageHeight()};
         scaffolding.resizeMode = SETTINGS.resizeMode;
         scaffolding.setup();
         scaffolding.appendTo(appEl);
+        // Force a relayout once the DOM has settled so the stage fills the
+        // viewport correctly on first paint (esp. dynamic-resize on mobile).
+        try {
+          if (typeof scaffolding.relayout === 'function') {
+            setTimeout(function () { scaffolding.relayout(); }, 0);
+          }
+        } catch (e) {}
         window.scaffolding = scaffolding;
         window.vm = scaffolding.vm;
         var vm = scaffolding.vm;
@@ -1764,7 +1887,7 @@
         fencing: !!cfg.fencing,
         miscLimits: !!cfg.miscLimits,
         maxClones: cfg.maxClones === Infinity ? null : cfg.maxClones,
-        resizeMode: cfg.resizeMode || 'preserve-ratio',
+        resizeMode: cfg.resizeMode || 'dynamic-resize',
         username: cfg.username || 'player',
       };
     }

@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.7/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.8/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -64,7 +64,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.7';
+  const EXTENSION_VERSION = '1.2.8';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -271,10 +271,35 @@
     //  so they can preview how the finished app will look.
     // ----------------------------------------------------------------
 
+    /**
+     * True when we're running inside a packaged/standalone app (built by this
+     * extension) rather than the Cocrea/Gandi editor. The bootstrap sets
+     * window.scaffolding on the built app, and the editor is never driven by
+     * Scaffolding. In a packaged app we must NOT prompt the user or try to
+     * resize an editor stage.
+     */
+    _isPackagedApp() {
+      try {
+        if (typeof window === 'undefined') return false;
+        if (window.scaffolding) return true;
+        // Scaffolding exposes this constructor on the window in built apps.
+        if (window.Scaffolding && window.Scaffolding.Scaffolding) return true;
+      } catch (e) {
+        /* ignore */
+      }
+      return false;
+    }
+
     _ensureOrientationChosen() {
       if (this._orientationChosen) return;
       // Guard against multiple synchronous calls before the prompt resolves.
       this._orientationChosen = true;
+
+      // In a packaged app there is no editor to preview and no user to prompt —
+      // the orientation is already baked into the build. Never show a popup.
+      if (this._isPackagedApp()) {
+        return;
+      }
 
       let choice = null;
       try {
@@ -1693,14 +1718,22 @@
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
     background: ${cfg.background};
+    /* Fill the whole viewport height even inside a WebView / App Inventor
+       WebViewer, including modern mobile dynamic viewport units. */
+    min-height: 100vh;
+    min-height: 100dvh;
   }
+  /* Paint the very root too, so any area the browser exposes outside body
+     (e.g. a WebViewer's own backing) still shows the app color. */
+  :root { background: ${cfg.background}; }
   /* The player container fills the whole viewport and centers the stage.
      Any area not covered by the stage (letterbox bars in preserve-ratio)
      shows this background color, so it looks like one seamless app instead
      of black/white bars. */
   #app {
-    position: absolute; inset: 0; display: flex;
+    position: fixed; inset: 0; display: flex;
     align-items: center; justify-content: center;
+    width: 100vw; height: 100vh; height: 100dvh;
     background: ${cfg.background};
   }
   /* Scaffolding renders into elements with sc- prefixed classes. Make its

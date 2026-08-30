@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.2/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.3/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.4.2';
+  const EXTENSION_VERSION = '1.4.3';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -884,13 +884,13 @@
           {
             opcode: 'whenTiltedForward',
             blockType: BlockType.EVENT,
-            text: 'when tilted forward (top down)',
+            text: 'when tilted forward',
             isEdgeActivated: false,
           },
           {
             opcode: 'whenTiltedBack',
             blockType: BlockType.EVENT,
-            text: 'when tilted back (top up)',
+            text: 'when tilted back',
             isEdgeActivated: false,
           },
           {
@@ -943,38 +943,61 @@
         ],
 
         menus: {
-          SCROLL_DIR_MENU: [
-            { text: 'any', value: 'any' },
-            { text: 'up', value: 'up' },
-            { text: 'down', value: 'down' },
-            { text: 'left', value: 'left' },
-            { text: 'right', value: 'right' },
-          ],
-          AXIS_MENU: [
-            { text: 'x', value: 'x' },
-            { text: 'y', value: 'y' },
-          ],
-          ORIENTATION_MENU: [
-            { text: 'portrait', value: 'portrait' },
-            { text: 'landscape', value: 'landscape' },
-          ],
-          ANGLE_MENU: [
-            { text: 'azimuth (compass)', value: 'azimuth' },
-            { text: 'pitch (front-back)', value: 'pitch' },
-            { text: 'roll (left-right)', value: 'roll' },
-          ],
-          TILT_DIR_MENU: [
-            { text: 'any', value: 'any' },
-            { text: 'left', value: 'left' },
-            { text: 'right', value: 'right' },
-            { text: 'forward (top down)', value: 'forward' },
-            { text: 'back (top up)', value: 'back' },
-          ],
-          AXIS3_MENU: [
-            { text: 'x', value: 'x' },
-            { text: 'y', value: 'y' },
-            { text: 'z', value: 'z' },
-          ],
+          // All menus use the object form with acceptReporters. Menus attached
+          // to EVENT/hat blocks (SCROLL_DIR_MENU, TILT_DIR_MENU) MUST be
+          // acceptReporters:false per the Scratch/TurboWarp hat rules — a hat
+          // menu that omits this can make the runtime reject the block (and
+          // silently drop the rest of the section).
+          SCROLL_DIR_MENU: {
+            acceptReporters: false,
+            items: [
+              { text: 'any', value: 'any' },
+              { text: 'up', value: 'up' },
+              { text: 'down', value: 'down' },
+              { text: 'left', value: 'left' },
+              { text: 'right', value: 'right' },
+            ],
+          },
+          AXIS_MENU: {
+            acceptReporters: true,
+            items: [
+              { text: 'x', value: 'x' },
+              { text: 'y', value: 'y' },
+            ],
+          },
+          ORIENTATION_MENU: {
+            acceptReporters: true,
+            items: [
+              { text: 'portrait', value: 'portrait' },
+              { text: 'landscape', value: 'landscape' },
+            ],
+          },
+          ANGLE_MENU: {
+            acceptReporters: true,
+            items: [
+              { text: 'azimuth', value: 'azimuth' },
+              { text: 'pitch', value: 'pitch' },
+              { text: 'roll', value: 'roll' },
+            ],
+          },
+          TILT_DIR_MENU: {
+            acceptReporters: false,
+            items: [
+              { text: 'any', value: 'any' },
+              { text: 'left', value: 'left' },
+              { text: 'right', value: 'right' },
+              { text: 'forward', value: 'forward' },
+              { text: 'back', value: 'back' },
+            ],
+          },
+          AXIS3_MENU: {
+            acceptReporters: true,
+            items: [
+              { text: 'x', value: 'x' },
+              { text: 'y', value: 'y' },
+              { text: 'z', value: 'z' },
+            ],
+          },
         },
       };
     }

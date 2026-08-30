@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.3.0/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.3.1/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.3.0';
+  const EXTENSION_VERSION = '1.3.1';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -577,6 +577,12 @@
         this._startHats('whenTiltedDirection', { DIRECTION: dir || 'any' });
         // Track the current direction so the reporter + edge logic have it.
         this.tiltDirection = dir;
+        // Also fire the dedicated per-direction hats (separate blocks). Only
+        // the one matching the current direction will pass its predicate.
+        if (dir === 'left') this._startHats('whenTiltedLeft');
+        else if (dir === 'right') this._startHats('whenTiltedRight');
+        else if (dir === 'forward') this._startHats('whenTiltedForward');
+        else if (dir === 'back') this._startHats('whenTiltedBack');
       });
 
       // ---- Device motion / shake ------------------------------------
@@ -1007,6 +1013,32 @@
               },
             },
           },
+          // Dedicated per-direction hats (separate blocks) for people who
+          // prefer them over the menu version above.
+          {
+            opcode: 'whenTiltedLeft',
+            blockType: BlockType.EVENT,
+            text: 'when tilted left',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenTiltedRight',
+            blockType: BlockType.EVENT,
+            text: 'when tilted right',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenTiltedForward',
+            blockType: BlockType.EVENT,
+            text: 'when tilted forward (top down)',
+            isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenTiltedBack',
+            blockType: BlockType.EVENT,
+            text: 'when tilted back (top up)',
+            isEdgeActivated: false,
+          },
           {
             opcode: 'isTiltedDirection',
             blockType: BlockType.BOOLEAN,
@@ -1207,6 +1239,28 @@
       const wanted = Cast.toString(args.DIRECTION);
       if (wanted === 'any' || wanted === '') return this.tiltDirection !== '';
       return wanted === this.tiltDirection;
+    }
+
+    // Dedicated per-direction hats. Each is fired only for its direction, and
+    // the predicate double-checks the current direction as a safety net.
+    whenTiltedLeft() {
+      this._ensureOrientationChosen();
+      return this.tiltDirection === 'left';
+    }
+
+    whenTiltedRight() {
+      this._ensureOrientationChosen();
+      return this.tiltDirection === 'right';
+    }
+
+    whenTiltedForward() {
+      this._ensureOrientationChosen();
+      return this.tiltDirection === 'forward';
+    }
+
+    whenTiltedBack() {
+      this._ensureOrientationChosen();
+      return this.tiltDirection === 'back';
     }
 
     isTiltedDirection(args) {

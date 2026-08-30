@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.4/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.5/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.4.4';
+  const EXTENSION_VERSION = '1.4.5';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -777,7 +777,7 @@
           },
 
           // ─── Scroll / swipe ──────────────────────────────────
-          '---Scroll & Swipe',
+          '---Scroll',
           // NOTE: Gandi/Cocrea does not render EVENT (hat) blocks that carry a
           // menu argument — doing so silently drops the rest of the palette.
           // So scroll/tilt direction hats are split into separate no-arg hats.

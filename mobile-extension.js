@@ -26,7 +26,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.3.1/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.4.0/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -65,7 +65,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.3.1';
+  const EXTENSION_VERSION = '1.4.0';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -85,12 +85,6 @@
   const JSZIP_URL =
     (typeof window !== 'undefined' && window.MOBILE_JSZIP_URL) ||
     'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
-
-  // Standard mobile viewport presets (portrait). Landscape swaps the axes.
-  const VIEWPORT_PRESETS = {
-    portrait: { width: 360, height: 640 },
-    landscape: { width: 640, height: 360 },
-  };
 
   // ------------------------------------------------------------------
   //  Small helpers
@@ -175,7 +169,6 @@
       // exposes for a packaged project.
       this.appConfig = {
         name: 'My Mobile App',
-        orientation: 'default', // default | portrait | landscape
         fullscreen: true,
         background: '#000000',
         // packager-equivalent runtime settings
@@ -211,12 +204,6 @@
       this._scaffoldingPromise = null;
       this._buildStatus = 'idle';
 
-      // --- orientation preview / prompt -------------------------------
-      // When the user first uses a mobile block we ask them to choose the app
-      // orientation and then adjust the editor stage so they can preview it.
-      this._orientationChosen = false;
-      this._previewApplied = false;
-      this._previewWarned = false;
       this._eventsBound = false;
 
       // IMPORTANT: do NOT do heavy/synchronous DOM work here. Cocrea/Gandi
@@ -296,122 +283,10 @@
       return false;
     }
 
-    _ensureOrientationChosen() {
-      if (this._orientationChosen) return;
-      // Guard against multiple synchronous calls before the prompt resolves.
-      this._orientationChosen = true;
-
-      // In a packaged app there is no editor to preview and no user to prompt —
-      // the orientation is already baked into the build. Never show a popup.
-      if (this._isPackagedApp()) {
-        return;
-      }
-
-      let choice = null;
-      try {
-        if (typeof prompt === 'function') {
-          const answer = prompt(
-            'Mobile Events: how should your app be oriented?\n\n' +
-              'Type "portrait" or "landscape" (leave blank for any/default).',
-            this.appConfig.orientation === 'default'
-              ? 'portrait'
-              : this.appConfig.orientation
-          );
-          if (answer != null) {
-            const normalized = String(answer).trim().toLowerCase();
-            if (normalized === 'portrait' || normalized === 'landscape') {
-              choice = normalized;
-            } else if (normalized === '' || normalized === 'any' || normalized === 'default') {
-              choice = 'default';
-            }
-          }
-        }
-      } catch (e) {
-        /* non-interactive environment — keep current setting */
-      }
-
-      if (choice) {
-        this.appConfig.orientation = choice;
-      }
-      this._applyEditorPreview();
-    }
-
-    /**
-     * Resize the editor stage to a phone-shaped viewport that matches the
-     * chosen orientation, giving a live preview of the app's aspect ratio.
-     */
-    _applyEditorPreview() {
-      const mode =
-        this.appConfig.orientation === 'landscape' ? 'landscape' : 'portrait';
-      const preset = VIEWPORT_PRESETS[mode];
-      if (!preset) return;
-
-      const w = preset.width;
-      const h = preset.height;
-      const runtime = this.runtime;
-      const vm =
-        (runtime && runtime.vm) ||
-        (typeof Scratch !== 'undefined' && Scratch.vm) ||
-        (typeof window !== 'undefined' && window.vm) ||
-        null;
-
-      // Try every known way a Scratch fork lets you set a custom stage size.
-      // Gandi/Cocrea, TurboWarp and vanilla scratch-vm all differ here, so we
-      // attempt them in order and stop at the first that doesn't throw.
-      const attempts = [
-        () => vm && typeof vm.setStageSize === 'function' && vm.setStageSize(w, h),
-        () =>
-          runtime &&
-          typeof runtime.setStageSize === 'function' &&
-          runtime.setStageSize(w, h),
-        // Gandi emits a runtime event that the GUI listens to.
-        () =>
-          runtime &&
-          typeof runtime.emit === 'function' &&
-          (runtime.emit('STAGE_SIZE_CHANGED', w, h), true),
-        () =>
-          vm &&
-          typeof vm.emit === 'function' &&
-          (vm.emit('STAGE_SIZE_CHANGED', w, h), true),
-        // Some forks store dimensions on the runtime directly + relayout.
-        () => {
-          if (!runtime) return false;
-          runtime.stageWidth = w;
-          runtime.stageHeight = h;
-          if (runtime.renderer && typeof runtime.renderer.setStageSize === 'function') {
-            runtime.renderer.setStageSize(0, w, h, 0);
-          }
-          return true;
-        },
-      ];
-
-      let applied = false;
-      for (const attempt of attempts) {
-        try {
-          if (attempt()) {
-            applied = true;
-            break;
-          }
-        } catch (e) {
-          /* try the next strategy */
-        }
-      }
-
-      this._previewApplied = applied;
-      if (!applied && !this._previewWarned) {
-        this._previewWarned = true;
-        // Don't spam; explain once. The build still exports the right shape.
-        console.warn(
-          '[Mobile Events] this editor does not support changing the stage ' +
-            'dimensions, so the ' +
-            mode +
-            ' preview could not be applied here. The exported app will still ' +
-            'use the ' +
-            mode +
-            ' layout.'
-        );
-      }
-    }
+    // Kept as a harmless no-op: many block predicates still call this. App
+    // orientation is configured in App Inventor now, so the extension no longer
+    // prompts for it or resizes the editor stage.
+    _ensureOrientationChosen() {}
 
     _readOrientationMode() {
       try {
@@ -782,32 +657,6 @@
             onClick: () => this.openAppInventor(),
             func: 'openAppInventor',
           },
-          '---App Info',
-          {
-            opcode: 'setAppOrientation',
-            blockType: BlockType.COMMAND,
-            text: 'lock app orientation to [MODE]',
-            arguments: {
-              MODE: {
-                type: ArgumentType.STRING,
-                menu: 'APP_ORIENTATION_MENU',
-                defaultValue: 'default',
-              },
-            },
-          },
-          {
-            opcode: 'previewOrientation',
-            blockType: BlockType.COMMAND,
-            text: 'preview app as [MODE] in editor',
-            arguments: {
-              MODE: {
-                type: ArgumentType.STRING,
-                menu: 'PREVIEW_ORIENTATION_MENU',
-                defaultValue: 'portrait',
-              },
-            },
-          },
-
           // ─── Packager-style build settings ───────────────────
           // These are editor actions (buttons), not script blocks: clicking
           // opens a prompt/toggle so the user configures the build via the UI.
@@ -1089,15 +938,6 @@
         ],
 
         menus: {
-          APP_ORIENTATION_MENU: [
-            { text: 'any', value: 'default' },
-            { text: 'portrait', value: 'portrait' },
-            { text: 'landscape', value: 'landscape' },
-          ],
-          PREVIEW_ORIENTATION_MENU: [
-            { text: 'portrait', value: 'portrait' },
-            { text: 'landscape', value: 'landscape' },
-          ],
           SCROLL_DIR_MENU: [
             { text: 'any', value: 'any' },
             { text: 'up', value: 'up' },
@@ -1386,27 +1226,6 @@
       if (requests.length === 0) return;
       // Return the promise so the VM waits for the prompt to resolve.
       return Promise.all(requests).catch(() => {});
-    }
-
-    // ----------------------------------------------------------------
-    //  App build configuration
-    // ----------------------------------------------------------------
-
-    setAppOrientation(args) {
-      const mode = Cast.toString(args.MODE);
-      if (['default', 'portrait', 'landscape'].includes(mode)) {
-        this.appConfig.orientation = mode;
-        this._applyEditorPreview();
-      }
-    }
-
-    previewOrientation(args) {
-      const mode = Cast.toString(args.MODE);
-      if (mode === 'portrait' || mode === 'landscape') {
-        this.appConfig.orientation = mode;
-        this._orientationChosen = true;
-        this._applyEditorPreview();
-      }
     }
 
     // ----------------------------------------------------------------
@@ -1799,9 +1618,6 @@
         parts.push(`const SCAFFOLDING_URL = ${JSON.stringify(SCAFFOLDING_URL)};`);
         parts.push(`const APP_INVENTOR_URL = ${JSON.stringify(APP_INVENTOR_URL)};`);
         parts.push(`const JSZIP_URL = ${JSON.stringify(JSZIP_URL)};`);
-        parts.push(
-          `const VIEWPORT_PRESETS = ${JSON.stringify(VIEWPORT_PRESETS)};`
-        );
 
         // Module-level helper functions, serialized from the live functions.
         parts.push(`const clamp = ${clamp.toString()};`);

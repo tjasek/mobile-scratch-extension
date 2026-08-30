@@ -25,7 +25,7 @@
   // extensions by fetching + eval (not a <script src>), so document.currentScript
   // is usually unavailable — hence we fall back to this known published URL.
   const DEFAULT_SELF_URL =
-    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.8/mobile-extension.js';
+    'https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.2.9/mobile-extension.js';
 
   // Best-effort detection of the URL this extension was loaded from, with the
   // published URL as a reliable fallback. Override via window.MOBILE_EXTENSION_SELF_URL.
@@ -64,7 +64,7 @@
     null;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.8';
+  const EXTENSION_VERSION = '1.2.9';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -1883,6 +1883,18 @@
           videoProvider: vm.runtime.ioDevices.video.provider
         };
 
+        // Paint the STAGE clear color to match the app background. This is what
+        // fixes white bars ABOVE/BELOW the backdrop: the Scratch stage clears
+        // to white by default, so any stage area your backdrop image doesn't
+        // cover (e.g. a 460x380 backdrop on a taller dynamic-resize stage)
+        // shows through as white. setBackgroundColor takes 0..1 RGB floats.
+        try {
+          var __bg = ${JSON.stringify(this._backgroundRgbFloats())};
+          if (vm.renderer && typeof vm.renderer.setBackgroundColor === 'function') {
+            vm.renderer.setBackgroundColor(__bg[0], __bg[1], __bg[2]);
+          }
+        } catch (e) {}
+
         // Apply runtime settings. Each is guarded so an older VM still runs.
         try { if (SETTINGS.username != null) scaffolding.setUsername(SETTINGS.username); } catch (e) {}
         try { if (vm.setTurboMode) vm.setTurboMode(!!SETTINGS.turbo); } catch (e) {}
@@ -1956,6 +1968,25 @@
       } catch (e) {
         return 360;
       }
+    }
+
+    /**
+     * Parse the app background hex color into [r, g, b] floats in 0..1 for
+     * the renderer's setBackgroundColor (which controls the stage clear color).
+     * Falls back to black if the color can't be parsed.
+     */
+    _backgroundRgbFloats() {
+      let hex = String(this.appConfig.background || '#000000').trim();
+      const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex);
+      if (!m) return [0, 0, 0];
+      let h = m[1];
+      if (h.length === 3) {
+        h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      }
+      const r = parseInt(h.slice(0, 2), 16) / 255;
+      const g = parseInt(h.slice(2, 4), 16) / 255;
+      const b = parseInt(h.slice(4, 6), 16) / 255;
+      return [r, g, b];
     }
 
     /**

@@ -19,6 +19,18 @@
 (function (Scratch) {
   'use strict';
 
+  // Capture the URL this extension was loaded from, so the built app can fetch
+  // this same source and bake it into the packaged runtime (the packaged
+  // project references the `mobileEvents` extension and won't run without it).
+  const SELF_URL = (function () {
+    try {
+      if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) {
+        return document.currentScript.src;
+      }
+    } catch (e) { /* ignore */ }
+    return (typeof window !== 'undefined' && window.MOBILE_EXTENSION_SELF_URL) || null;
+  })();
+
   const {
     runtime,
     ArgumentType,
@@ -28,7 +40,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.2.1';
+  const EXTENSION_VERSION = '1.2.2';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -1323,6 +1335,50 @@
     }
 
     // ----------------------------------------------------------------
+    //  Build: bake the custom extensions the project uses into data: URIs
+    //
+    //  The packaged project.json references custom extension ids (at minimum
+    //  this Mobile Events extension). The plain runtime can't fetch them, so we
+    //  fetch this extension's own source and embed it as a data: URI that the
+    //  packaged VM loads before the project. Mirrors the TurboWarp packager's
+    //  "bake extensions" step.
+    // ----------------------------------------------------------------
+
+    async _bakeProjectExtensions() {
+      const uris = [];
+      const source = await this._loadSelfSource();
+      if (source) {
+        // Wrap in an IIFE so the extension doesn't pollute globals in the
+        // unsandboxed packaged runtime, matching the packager's wrapping.
+        const wrapped = `(function(Scratch) { ${source} })(Scratch);`;
+        uris.push(`data:text/javascript;,${encodeURIComponent(wrapped)}`);
+      }
+      return uris;
+    }
+
+    /** Fetch this extension's own source text (for baking into the build). */
+    async _loadSelfSource() {
+      if (!SELF_URL) {
+        throw new Error(
+          'Could not determine this extension URL to bundle it into the app. ' +
+            'Set window.MOBILE_EXTENSION_SELF_URL to the extension URL and rebuild.'
+        );
+      }
+      try {
+        const res = await fetch(SELF_URL);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.text();
+      } catch (e) {
+        throw new Error(
+          'Could not fetch the extension source to bundle it into the app (' +
+            (e && e.message ? e.message : e) +
+            '). The build needs to reach ' +
+            SELF_URL
+        );
+      }
+    }
+
+    // ----------------------------------------------------------------
     //  Build: assemble the standalone HTML app
     //
     //  The output is a single HTML file that inlines both the Scratch runtime
@@ -1331,9 +1387,10 @@
     // ----------------------------------------------------------------
 
     async _generateHtmlApp() {
-      const [projectData, scaffoldingSource] = await Promise.all([
+      const [projectData, scaffoldingSource, extensionURIs] = await Promise.all([
         this._exportProjectSb3(),
         this._loadScaffoldingSource(),
+        this._bakeProjectExtensions(),
       ]);
 
       const projectBase64 = this._uint8ToBase64(projectData);
@@ -1392,6 +1449,9 @@
 
       // Build settings (mirrors the TurboWarp packager options).
       var SETTINGS = ${JSON.stringify(this._buildSettingsForHtml())};
+      // Custom extensions used by the project (e.g. this Mobile Events
+      // extension), baked as data: URIs so the packaged runtime can load them.
+      var EXTENSION_URIS = ${JSON.stringify(extensionURIs)};
 
       try {
         var scaffolding = new Scaffolding.Scaffolding();
@@ -1427,8 +1487,34 @@
           }
         } catch (e) {}
 
-        var zipData = base64ToUint8(PROJECT_BASE64);
-        scaffolding.loadProject(zipData).then(function () {
+        // Allow the packaged project's custom extensions to load, and register
+        // them into the runtime BEFORE loading the project (otherwise the VM
+        // rejects the project with "Permission to load extension denied").
+        try {
+          if (scaffolding.setExtensionSecurityManager) {
+            scaffolding.setExtensionSecurityManager({
+              getSandboxMode: function () { return 'unsandboxed'; },
+              canLoadExtensionFromProject: function () { return true; },
+              canFetch: function () { return true; },
+              canOpenWindow: function () { return true; },
+              canRedirect: function () { return true; }
+            });
+          }
+        } catch (e) { /* older scaffolding without a security manager */ }
+
+        var loadExtensions = Promise.resolve();
+        if (vm.extensionManager && vm.extensionManager.loadExtensionURL) {
+          loadExtensions = Promise.all(EXTENSION_URIS.map(function (uri) {
+            return vm.extensionManager.loadExtensionURL(uri).catch(function (err) {
+              console.warn('Could not load bundled extension', err);
+            });
+          }));
+        }
+
+        loadExtensions.then(function () {
+          var zipData = base64ToUint8(PROJECT_BASE64);
+          return scaffolding.loadProject(zipData);
+        }).then(function () {
           loadingEl.style.display = 'none';
           if (SETTINGS.autoStart) {
             scaffolding.greenFlag();

@@ -20,7 +20,7 @@ one of these URLs. The **Mobile Events** category then appears in the palette.
 **Pinned release (stable, recommended for sharing):**
 
 ```
-https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.0.1/mobile-extension.js
+https://cdn.jsdelivr.net/gh/tjasek/mobile-scratch-extension@v1.1.0/mobile-extension.js
 ```
 
 **Latest on main (may be cached by jsDelivr for a few hours):**
@@ -74,22 +74,33 @@ These blocks build the app **directly from the extension**. See
 
 **Build settings** (mirror the TurboWarp packager)
 
+These are **buttons** in the palette, not script blocks — clicking one opens a
+small dialog so you configure the build through the UI. The values are stored on
+the extension and applied to every build.
+
+| Button | Description |
+| --- | --- |
+| ⚙️ Configure build settings | Toggle on/off options: **start with green flag** (autostart), **turbo mode**, **frame interpolation**, **high quality pen**, **keep sprites on stage (fencing)**, **runtime limits**, **fullscreen**. |
+| 🎞 Set framerate (30/60) | 30 or 60 (or any 1–240). |
+| 🖼 Set resize mode | `preserve-ratio`, `stretch`, or `dynamic-resize`. |
+| 👤 Set username | Value returned by the app's `username` block. |
+| 🔢 Set clone limit | Max clones (0 or less = unlimited). |
+| ☁️ Set cloud build service URL | Endpoint used by *Build APK in the cloud*. |
+
 | Block | Type | Description |
 | --- | --- | --- |
-| [setting] [on/off] | command | Toggle: **start with green flag** (autostart), **turbo mode**, **frame interpolation**, **high quality pen**, **keep sprites on stage (fencing)**, **runtime limits**, **fullscreen**. |
-| set app framerate to [FPS] fps | command | 30 or 60 (or any 1–240). |
-| set app resize mode to [MODE] | command | `preserve ratio`, `stretch`, or `resize (dynamic)`. |
-| set app clone limit to [LIMIT] | command | Max clones (0 or less = unlimited). |
-| set app username to [NAME] | command | Value returned by the `username` block. |
-| set cloud build service to [URL] | command | Endpoint used by *Build APK in the cloud*. |
+| build setting [setting] | reporter | Current value of a chosen build setting (for feedback in scripts). |
 
 ### Touch
 | Block | Type | Description |
 | --- | --- | --- |
-| when screen touched | event | Fires on touch/press start. |
+| when screen touched | event | Fires on touch/press start anywhere on the stage. |
 | when touch moves | event | Fires while a touch is dragged. |
 | when touch released | event | Fires when the touch/press ends. |
-| is screen being touched? | boolean | True while a touch is active. |
+| when this sprite touched | event | Fires only when *this* sprite is the one under the touch (per-sprite, unlike the global "when screen touched"). |
+| when this sprite dragged | event | Fires while *this* sprite is being dragged by a touch. |
+| is this sprite being touched? | boolean | True while a touch is currently over this sprite. |
+| is screen being touched? | boolean | True while any touch is active. |
 | touch x / touch y | reporter | Touch position in Scratch stage coordinates (-240..240, -180..180). |
 | number of touches | reporter | Count of active touch points (multi-touch). |
 

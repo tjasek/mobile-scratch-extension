@@ -23,11 +23,12 @@
     runtime,
     ArgumentType,
     BlockType,
+    TargetType,
     Cast,
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.0.1';
+  const EXTENSION_VERSION = '1.1.0';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -113,6 +114,12 @@
       this.scrollDeltaY = 0;
       this.lastScrollDirection = '';
       this._scrollResetTimer = null;
+
+      // --- per-sprite touch / drag state ------------------------------
+      // drawableID of the sprite currently under the active touch/drag, or null.
+      this._touchedDrawableID = null;
+      this._draggedDrawableID = null;
+      this._dragStartClient = null;
 
       // --- orientation state ------------------------------------------
       this.azimuth = 0; // compass heading, 0..360
@@ -310,7 +317,16 @@
         this.touchY = point.y;
         this.isTouching = true;
         this.touchCount = this._countTouches(event, 1);
+        // Which sprite is under this touch? (client pixel coords for pick)
+        const client = this._clientFromEvent(event);
+        this._touchedDrawableID = this._pickDrawable(client.x, client.y);
+        this._draggedDrawableID = this._touchedDrawableID;
+        this._dragStartClient = client;
         this._startHats('whenTouched');
+        // Per-sprite: fire the sprite-touch hat (predicate filters the sprite).
+        if (this._touchedDrawableID != null) {
+          this._startHats('whenSpriteTouched');
+        }
       };
       const onPointerMove = (event) => {
         if (!this.isTouching) return;
@@ -318,6 +334,16 @@
         this.touchX = point.x;
         this.touchY = point.y;
         this._startHats('whenTouchMoved');
+        // Per-sprite drag: only after the pointer has moved a little.
+        if (this._draggedDrawableID != null && this._dragStartClient) {
+          const client = this._clientFromEvent(event);
+          const moved =
+            Math.abs(client.x - this._dragStartClient.x) +
+            Math.abs(client.y - this._dragStartClient.y);
+          if (moved > 3) {
+            this._startHats('whenSpriteDragged');
+          }
+        }
       };
       const onPointerUp = (event) => {
         if (this.isTouching) {
@@ -325,6 +351,9 @@
         }
         this.isTouching = false;
         this.touchCount = 0;
+        this._touchedDrawableID = null;
+        this._draggedDrawableID = null;
+        this._dragStartClient = null;
       };
 
       if (window.PointerEvent) {
@@ -455,6 +484,52 @@
       return clientToStage(clientX, clientY, canvas);
     }
 
+    _clientFromEvent(event) {
+      if (event.touches && event.touches.length) {
+        return { x: event.touches[0].clientX, y: event.touches[0].clientY };
+      }
+      if (event.changedTouches && event.changedTouches.length) {
+        return {
+          x: event.changedTouches[0].clientX,
+          y: event.changedTouches[0].clientY,
+        };
+      }
+      return { x: event.clientX, y: event.clientY };
+    }
+
+    /**
+     * Return the drawableID of the top sprite at the given client (canvas
+     * pixel) coordinates, or null if nothing (or the stage) is there.
+     * renderer.pick expects client coordinates and returns false when nothing
+     * is hit.
+     */
+    _pickDrawable(clientX, clientY) {
+      try {
+        const renderer = this.runtime && this.runtime.renderer;
+        if (!renderer || typeof renderer.pick !== 'function') return null;
+        const canvas = this._getCanvas();
+        let x = clientX;
+        let y = clientY;
+        if (canvas && typeof canvas.getBoundingClientRect === 'function') {
+          const rect = canvas.getBoundingClientRect();
+          x = clientX - rect.left;
+          y = clientY - rect.top;
+        }
+        const picked = renderer.pick(x, y);
+        return picked === false || picked == null ? null : picked;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /** Does the given util's target own the currently touched/dragged drawable? */
+    _isTargetTouched(util, drawableID) {
+      if (drawableID == null) return false;
+      const target = util && util.target;
+      if (!target || target.isStage) return false;
+      return target.drawableID === drawableID;
+    }
+
     _countTouches(event, fallback) {
       if (event.touches && typeof event.touches.length === 'number') {
         return event.touches.length || fallback;
@@ -557,95 +632,61 @@
           },
 
           // ─── Packager-style build settings ───────────────────
+          // These are editor actions (buttons), not script blocks: clicking
+          // opens a prompt/toggle so the user configures the build via the UI.
           '---Build Settings',
           {
-            opcode: 'setBuildToggle',
-            blockType: BlockType.COMMAND,
-            text: '[SETTING] [ONOFF]',
-            arguments: {
-              SETTING: {
-                type: ArgumentType.STRING,
-                menu: 'BUILD_TOGGLE_MENU',
-                defaultValue: 'autoStart',
-              },
-              ONOFF: {
-                type: ArgumentType.STRING,
-                menu: 'ONOFF_MENU',
-                defaultValue: 'on',
-              },
-            },
+            blockType: BlockType.BUTTON,
+            text: '⚙️ Configure build settings',
+            onClick: () => this.configureBuildSettings(),
+            func: 'configureBuildSettings',
           },
           {
-            opcode: 'setFramerate',
-            blockType: BlockType.COMMAND,
-            text: 'set app framerate to [FPS] fps',
-            arguments: {
-              FPS: {
-                type: ArgumentType.NUMBER,
-                defaultValue: 30,
-              },
-            },
+            blockType: BlockType.BUTTON,
+            text: '🎞 Set framerate (30/60)',
+            onClick: () => this.promptFramerate(),
+            func: 'promptFramerate',
           },
           {
-            opcode: 'setResizeMode',
-            blockType: BlockType.COMMAND,
-            text: 'set app resize mode to [MODE]',
-            arguments: {
-              MODE: {
-                type: ArgumentType.STRING,
-                menu: 'RESIZE_MODE_MENU',
-                defaultValue: 'preserve-ratio',
-              },
-            },
+            blockType: BlockType.BUTTON,
+            text: '🖼 Set resize mode',
+            onClick: () => this.promptResizeMode(),
+            func: 'promptResizeMode',
           },
           {
-            opcode: 'setMaxClones',
-            blockType: BlockType.COMMAND,
-            text: 'set app clone limit to [LIMIT]',
-            arguments: {
-              LIMIT: {
-                type: ArgumentType.NUMBER,
-                defaultValue: 300,
-              },
-            },
+            blockType: BlockType.BUTTON,
+            text: '👤 Set username',
+            onClick: () => this.promptUsername(),
+            func: 'promptUsername',
           },
           {
-            opcode: 'setUsername',
-            blockType: BlockType.COMMAND,
-            text: 'set app username to [NAME]',
-            arguments: {
-              NAME: {
-                type: ArgumentType.STRING,
-                defaultValue: 'player',
-              },
-            },
+            blockType: BlockType.BUTTON,
+            text: '🔢 Set clone limit',
+            onClick: () => this.promptMaxClones(),
+            func: 'promptMaxClones',
           },
           {
-            opcode: 'setCloudBuildService',
-            blockType: BlockType.COMMAND,
-            text: 'set cloud build service to [URL]',
-            arguments: {
-              URL: {
-                type: ArgumentType.STRING,
-                defaultValue: 'https://your-build-service/',
-              },
-            },
-          },
-          '---',
-          {
-            opcode: 'downloadHtmlApp',
-            blockType: BlockType.COMMAND,
-            text: 'build standalone app (HTML)',
-          },
-          {
-            opcode: 'downloadCordovaProject',
-            blockType: BlockType.COMMAND,
-            text: 'build Android project (Cordova)',
+            blockType: BlockType.BUTTON,
+            text: '☁️ Set cloud build service URL',
+            onClick: () => this.promptCloudBuildService(),
+            func: 'promptCloudBuildService',
           },
           {
             opcode: 'getBuildStatus',
             blockType: BlockType.REPORTER,
             text: 'build status',
+          },
+          {
+            opcode: 'getBuildSetting',
+            blockType: BlockType.REPORTER,
+            text: 'build setting [SETTING]',
+            arguments: {
+              SETTING: {
+                type: ArgumentType.STRING,
+                menu: 'BUILD_SETTING_MENU',
+                defaultValue: 'autoStart',
+              },
+            },
           },
           {
             opcode: 'getExtensionVersion',
@@ -672,6 +713,26 @@
             blockType: BlockType.EVENT,
             text: 'when touch released',
             isEdgeActivated: false,
+          },
+          {
+            opcode: 'whenSpriteTouched',
+            blockType: BlockType.EVENT,
+            text: 'when this sprite touched',
+            isEdgeActivated: false,
+            filter: [TargetType.SPRITE],
+          },
+          {
+            opcode: 'whenSpriteDragged',
+            blockType: BlockType.EVENT,
+            text: 'when this sprite dragged',
+            isEdgeActivated: false,
+            filter: [TargetType.SPRITE],
+          },
+          {
+            opcode: 'isSpriteTouched',
+            blockType: BlockType.BOOLEAN,
+            text: 'is this sprite being touched?',
+            filter: [TargetType.SPRITE],
           },
           {
             opcode: 'isTouchingScreen',
@@ -820,7 +881,7 @@
             { text: 'portrait', value: 'portrait' },
             { text: 'landscape', value: 'landscape' },
           ],
-          BUILD_TOGGLE_MENU: [
+          BUILD_SETTING_MENU: [
             { text: 'start with green flag', value: 'autoStart' },
             { text: 'turbo mode', value: 'turbo' },
             { text: 'frame interpolation', value: 'interpolation' },
@@ -828,15 +889,10 @@
             { text: 'keep sprites on stage (fencing)', value: 'fencing' },
             { text: 'runtime limits', value: 'miscLimits' },
             { text: 'fullscreen', value: 'fullscreen' },
-          ],
-          ONOFF_MENU: [
-            { text: 'on', value: 'on' },
-            { text: 'off', value: 'off' },
-          ],
-          RESIZE_MODE_MENU: [
-            { text: 'preserve ratio', value: 'preserve-ratio' },
-            { text: 'stretch', value: 'stretch' },
-            { text: 'resize (dynamic)', value: 'dynamic-resize' },
+            { text: 'framerate', value: 'framerate' },
+            { text: 'resize mode', value: 'resizeMode' },
+            { text: 'clone limit', value: 'maxClones' },
+            { text: 'username', value: 'username' },
           ],
           SCROLL_DIR_MENU: [
             { text: 'any', value: 'any' },
@@ -896,6 +952,42 @@
     whenTouchReleased() {
       this._ensureOrientationChosen();
       return true;
+    }
+
+    // Per-sprite hats: run for the sprite the touch/drag landed on.
+    whenSpriteTouched(args, util) {
+      this._ensureOrientationChosen();
+      return this._isTargetTouched(util, this._touchedDrawableID);
+    }
+
+    whenSpriteDragged(args, util) {
+      this._ensureOrientationChosen();
+      return this._isTargetTouched(util, this._draggedDrawableID);
+    }
+
+    isSpriteTouched(args, util) {
+      this._ensureOrientationChosen();
+      // True while a touch is active and it is over this sprite right now.
+      if (!this.isTouching) return false;
+      const drawableID = this._pickDrawable(
+        // Convert current stage touch back to client pixels via the canvas rect.
+        ...this._stageTouchToClient()
+      );
+      return this._isTargetTouched(util, drawableID);
+    }
+
+    /** Current touch point (stage coords) back to client pixels for picking. */
+    _stageTouchToClient() {
+      const canvas = this._getCanvas();
+      if (!canvas || typeof canvas.getBoundingClientRect !== 'function') {
+        return [0, 0];
+      }
+      const rect = canvas.getBoundingClientRect();
+      const width = rect.width || 480;
+      const height = rect.height || 360;
+      const relX = (this.touchX + 240) / 480;
+      const relY = (180 - this.touchY) / 360;
+      return [rect.left + relX * width, rect.top + relY * height];
     }
 
     whenPortrait() {
@@ -1067,44 +1159,110 @@
       }
     }
 
-    setBuildToggle(args) {
-      const setting = Cast.toString(args.SETTING);
-      const on = Cast.toString(args.ONOFF) === 'on';
-      if (Object.prototype.hasOwnProperty.call(this.appConfig, setting)) {
-        this.appConfig[setting] = on;
+    // ----------------------------------------------------------------
+    //  Build settings — configured via editor buttons (prompts/toggles),
+    //  not script blocks. Each opens a small dialog and updates appConfig.
+    // ----------------------------------------------------------------
+
+    /** Toggle the on/off build settings from a single menu-driven dialog. */
+    configureBuildSettings() {
+      const toggles = [
+        ['autoStart', 'Start with green flag'],
+        ['turbo', 'Turbo mode'],
+        ['interpolation', 'Frame interpolation'],
+        ['highQualityPen', 'High quality pen'],
+        ['fencing', 'Keep sprites on stage (fencing)'],
+        ['miscLimits', 'Runtime limits'],
+        ['fullscreen', 'Fullscreen'],
+      ];
+      if (typeof prompt !== 'function') return;
+      // Present the current state and let the user type which ones to flip.
+      const lines = toggles.map(
+        (t, i) => `${i + 1}. ${t[1]}: ${this.appConfig[t[0]] ? 'ON' : 'OFF'}`
+      );
+      const answer = prompt(
+        'Build settings — type the numbers to TOGGLE, separated by commas ' +
+          '(e.g. "1,3"). Leave blank to keep as-is.\n\n' +
+          lines.join('\n'),
+        ''
+      );
+      if (answer == null) return;
+      String(answer)
+        .split(',')
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => !Number.isNaN(n) && n >= 1 && n <= toggles.length)
+        .forEach((n) => {
+          const key = toggles[n - 1][0];
+          this.appConfig[key] = !this.appConfig[key];
+        });
+    }
+
+    promptFramerate() {
+      if (typeof prompt !== 'function') return;
+      const answer = prompt('App framerate (fps), e.g. 30 or 60:', String(this.appConfig.framerate));
+      if (answer == null) return;
+      const fps = Number(answer);
+      if (!Number.isNaN(fps)) {
+        this.appConfig.framerate = clamp(Math.round(fps) || 30, 1, 240);
       }
     }
 
-    setFramerate(args) {
-      const fps = Cast.toNumber(args.FPS);
-      // Clamp to sane bounds; packager commonly uses 30 or 60.
-      this.appConfig.framerate = clamp(Math.round(fps) || 30, 1, 240);
-    }
-
-    setResizeMode(args) {
-      const mode = Cast.toString(args.MODE);
+    promptResizeMode() {
+      if (typeof prompt !== 'function') return;
+      const answer = prompt(
+        'Resize mode — type one of: preserve-ratio, stretch, dynamic-resize',
+        this.appConfig.resizeMode
+      );
+      if (answer == null) return;
+      const mode = String(answer).trim().toLowerCase();
       if (['preserve-ratio', 'stretch', 'dynamic-resize'].includes(mode)) {
         this.appConfig.resizeMode = mode;
       }
     }
 
-    setMaxClones(args) {
-      const limit = Cast.toNumber(args.LIMIT);
-      // A negative or zero value means "unlimited".
-      this.appConfig.maxClones = limit > 0 ? Math.round(limit) : Infinity;
+    promptUsername() {
+      if (typeof prompt !== 'function') return;
+      const answer = prompt('Default username for the app:', this.appConfig.username);
+      if (answer == null) return;
+      this.appConfig.username = String(answer).trim() || 'player';
     }
 
-    setUsername(args) {
-      const name = Cast.toString(args.NAME).trim();
-      this.appConfig.username = name || 'player';
+    promptMaxClones() {
+      if (typeof prompt !== 'function') return;
+      const current =
+        this.appConfig.maxClones === Infinity ? '0' : String(this.appConfig.maxClones);
+      const answer = prompt('Clone limit (0 or less = unlimited):', current);
+      if (answer == null) return;
+      const limit = Number(answer);
+      if (!Number.isNaN(limit)) {
+        this.appConfig.maxClones = limit > 0 ? Math.round(limit) : Infinity;
+      }
     }
 
-    setCloudBuildService(args) {
-      this.buildServiceUrl = Cast.toString(args.URL).trim();
+    promptCloudBuildService() {
+      if (typeof prompt !== 'function') return;
+      const answer = prompt(
+        'Cloud build service URL (leave blank to disable):',
+        this.buildServiceUrl || ''
+      );
+      if (answer == null) return;
+      this.buildServiceUrl = String(answer).trim();
     }
 
     getBuildStatus() {
       return this._buildStatus;
+    }
+
+    /** Report a single build setting's current value (for scripts/UI feedback). */
+    getBuildSetting(args) {
+      const key = Cast.toString(args.SETTING);
+      if (key === 'maxClones') {
+        return this.appConfig.maxClones === Infinity ? 'unlimited' : this.appConfig.maxClones;
+      }
+      if (!Object.prototype.hasOwnProperty.call(this.appConfig, key)) return '';
+      const val = this.appConfig[key];
+      if (typeof val === 'boolean') return val ? 'on' : 'off';
+      return val;
     }
 
     getExtensionVersion() {

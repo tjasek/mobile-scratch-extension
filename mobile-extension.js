@@ -27,7 +27,7 @@
   } = Scratch;
 
   const EXTENSION_ID = 'mobileEvents';
-  const EXTENSION_VERSION = '1.0.0';
+  const EXTENSION_VERSION = '1.0.1';
 
   // The Scaffolding runtime is the same minimal Scratch player the TurboWarp
   // packager embeds into standalone apps. We fetch it once at build time and
@@ -118,7 +118,12 @@
       this.azimuth = 0; // compass heading, 0..360
       this.pitch = 0; // front/back tilt, degrees
       this.roll = 0; // left/right tilt, degrees
-      this.orientationMode = this._readOrientationMode();
+      this.orientationMode = 'portrait';
+      try {
+        this.orientationMode = this._readOrientationMode();
+      } catch (e) {
+        /* keep default; nothing may block the synchronous register() call */
+      }
 
       // --- motion / shake state ---------------------------------------
       this.accelX = 0;
@@ -160,8 +165,36 @@
       // orientation and then adjust the editor stage so they can preview it.
       this._orientationChosen = false;
       this._previewApplied = false;
+      this._eventsBound = false;
 
-      this._bindEvents();
+      // IMPORTANT: do NOT do heavy/synchronous DOM work here. Cocrea/Gandi
+      // requires Scratch.extensions.register(...) to run synchronously as the
+      // script first executes; anything that throws or blocks in the
+      // constructor can cause a "call extensions.register too late" error.
+      // We defer event wiring to a microtask so registration completes first.
+      const bind = () => this._safeBindEvents();
+      if (typeof queueMicrotask === 'function') {
+        queueMicrotask(bind);
+      } else if (typeof Promise !== 'undefined') {
+        Promise.resolve().then(bind);
+      } else {
+        setTimeout(bind, 0);
+      }
+    }
+
+    // ----------------------------------------------------------------
+    //  Event wiring (deferred, fully guarded)
+    // ----------------------------------------------------------------
+
+    _safeBindEvents() {
+      if (this._eventsBound) return;
+      this._eventsBound = true;
+      try {
+        this._bindEvents();
+      } catch (e) {
+        // Event wiring is best-effort; never let it break the extension.
+        console.warn('[Mobile Events] event binding failed:', e);
+      }
     }
 
     // ----------------------------------------------------------------
@@ -1797,6 +1830,11 @@
 
   // ------------------------------------------------------------------
   //  Register
+  //
+  //  Cocrea/Gandi requires this to run synchronously the moment the script
+  //  executes. Construct the instance first, then register — and never let a
+  //  stray error prevent the synchronous register() call from happening.
   // ------------------------------------------------------------------
-  Scratch.extensions.register(new MobileEventsExtension(runtime));
+  const extensionInstance = new MobileEventsExtension(runtime);
+  Scratch.extensions.register(extensionInstance);
 })(Scratch);
